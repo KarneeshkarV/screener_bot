@@ -9,7 +9,7 @@ scheduled_screener:
   times:
     - "16:00"
     - "02:30"
-  working_directory: /home/karneeshkar/Desktop/personal/screener
+  working_directory: .
   timeout_seconds: 300
   commands:
     - label: India EMA

@@ -42,7 +42,8 @@ class ScheduledScreenerService:
 
     async def _run_command(self, command: ScreenerCommandConfig) -> CommandResult:
         cfg = self.config.scheduled_screener
-        cwd = Path(cfg.working_directory)
+        configured_cwd = Path(cfg.working_directory)
+        cwd = configured_cwd if configured_cwd.exists() else None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command.command,
