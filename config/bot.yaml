@@ -5,14 +5,46 @@ telegram:
     - 5526359855
 
 portfolio:
-  - symbol: NSE:RELIANCE
-    market: india
-    avg_price: 2800
-    ruleset: swing_momentum
-
+  # US holdings
   - symbol: AAPL
     market: us
-    avg_price: 180
+    avg_price: 267.18
+    ruleset: swing_momentum
+
+  - symbol: AMZN
+    market: us
+    avg_price: 252.90
+    ruleset: swing_momentum
+
+  - symbol: NBIS
+    market: us
+    avg_price: 179.20
+    ruleset: swing_momentum
+
+  # India (NSE) holdings
+  - symbol: NSE:ATHERENERG
+    market: india
+    avg_price: 906.78
+    ruleset: swing_momentum
+
+  - symbol: NSE:CPPLUS
+    market: india
+    avg_price: 2453.95
+    ruleset: swing_momentum
+
+  - symbol: NSE:EBGNG
+    market: india
+    avg_price: 422.80
+    ruleset: swing_momentum
+
+  - symbol: NSE:GODREJPROP
+    market: india
+    avg_price: 1847.50
+    ruleset: swing_momentum
+
+  - symbol: NSE:NMDC
+    market: india
+    avg_price: 89.88
     ruleset: swing_momentum
 
 rulesets:

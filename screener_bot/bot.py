@@ -14,7 +14,7 @@ from .technical import TechnicalService
 
 HELP_TEXT = (
     "Commands:\n"
-    "/chat_id - show this chat ID\n"
+    "/run - run portfolio check now\n"
     "/check_portfolio - check every configured holding\n"
     "/status - show bot status\n"
     "/help - show this help"
@@ -24,7 +24,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Start the bot"),
     BotCommand("help", "Show available commands"),
     BotCommand("status", "Show bot status"),
-    BotCommand("chat_id", "Show this chat ID"),
+    BotCommand("run", "Run portfolio check now"),
     BotCommand("check_portfolio", "Check every configured holding"),
 ]
 
@@ -63,10 +63,6 @@ def build_application(
         if await _guard(config, update) and update.message:
             await update.message.reply_text(HELP_TEXT)
 
-    async def chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_chat and update.message:
-            await update.message.reply_text(f"Chat ID: {update.effective_chat.id}")
-
     async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.message:
             await update.message.reply_text(
@@ -74,8 +70,8 @@ def build_application(
                 f"Timezone: {config.timezone}"
             )
 
-    async def check_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await _guard(config, update) or not update.message:
+    async def _run_portfolio_check(update: Update) -> None:
+        if not update.message:
             return
         await update.message.reply_text("Checking portfolio...")
         try:
@@ -89,10 +85,18 @@ def build_application(
         for message in split_messages(report):
             await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
+    async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await _guard(config, update):
+            await _run_portfolio_check(update)
+
+    async def check_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await _guard(config, update):
+            await _run_portfolio_check(update)
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("chat_id", chat_id))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("run", run))
     app.add_handler(CommandHandler("check_portfolio", check_portfolio))
     app.post_init = _register_commands
     return app

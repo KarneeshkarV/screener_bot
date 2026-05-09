@@ -34,58 +34,92 @@ def _fmt_rule(value: bool | None) -> str:
     return "yes" if value else "no"
 
 
+def _currency(market: str) -> str:
+    return "₹" if market == "india" else "$"
+
+
+def _fmt_pnl(close: float, avg_price: float, market: str) -> str:
+    cur = _currency(market)
+    diff = close - avg_price
+    pct = (diff / avg_price) * 100
+    sign = "+" if diff >= 0 else "-"
+    return f"{sign}{cur}{abs(diff):.2f} ({sign}{abs(pct):.2f}%)"
+
+
+def _signal(matched: bool | None) -> str:
+    if matched is True:
+        return "✅ Yes"
+    if matched is False:
+        return "❌ No"
+    return "—"
+
+
 def format_portfolio_report(
     technical: Iterable[TechnicalStatus],
     ownership: dict[str, OwnershipStatus],
 ) -> str:
-    lines = ["<b>Portfolio Check</b>"]
+    lines = ["<b>📊 Portfolio Check</b>"]
+    divider = "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄"
+
     for status in technical:
         item = status.item
+        cur = _currency(item.market)
+        flag = "🇮🇳" if item.market == "india" else "🇺🇸"
+        symbol = item.symbol.split(":")[-1]
+
         lines.append("")
-        lines.append(f"<b>{escape(item.symbol)}</b> ({escape(item.market)})")
+        lines.append(divider)
+        lines.append(f"{flag} <b>{escape(symbol)}</b>")
+
         if status.error:
-            lines.append(f"Price: {escape(status.error)}")
+            lines.append(f"  <b>Price:</b> {escape(status.error)}")
         else:
             daily = (
-                f" ({status.daily_change_pct:+.2f}%)"
+                f"  ({status.daily_change_pct:+.2f}%)"
                 if status.daily_change_pct is not None
                 else ""
             )
-            lines.append(f"Close: {_fmt_number(status.close)}{daily}")
+            lines.append(f"  <b>Price:</b> {cur}{_fmt_number(status.close)}{daily}")
 
-        snapshot = ", ".join(
-            f"{escape(result.label)}: {escape(_fmt_number(result.value))}"
-            if not result.error
-            else f"{escape(result.label)}: n/a"
-            for result in status.snapshot
-        )
-        if snapshot:
-            lines.append(snapshot)
+            if item.avg_price is not None and status.close is not None:
+                lines.append(
+                    f"  <b>Avg Cost:</b> {cur}{_fmt_number(item.avg_price)}  "
+                    f"<b>P&amp;L:</b> {escape(_fmt_pnl(status.close, item.avg_price, item.market))}"
+                )
+
+        if status.snapshot:
+            parts = []
+            for result in status.snapshot:
+                val = "n/a" if result.error else _fmt_number(result.value)
+                parts.append(f"{escape(result.label)}: <b>{escape(val)}</b>")
+            lines.append("  " + "  ·  ".join(parts))
+
         lines.append(
-            f"Entry: {_fmt_rule(status.entry.matched)} | Exit: {_fmt_rule(status.exit.matched)}"
+            f"  <b>Entry:</b> {_signal(status.entry.matched)}    "
+            f"<b>Exit:</b> {_signal(status.exit.matched)}"
         )
 
         owner = ownership.get(item.symbol)
-        if owner is None:
-            lines.append("Ownership: n/a")
-        elif owner.market == "india":
-            parts = [
-                f"Promoter {_fmt_number(owner.promoter_pct_latest)}% ({_fmt_delta(owner.promoter_change)})",
-                f"FII {_fmt_number(owner.fii_pct_latest)}% ({_fmt_delta(owner.fii_change)})",
-                f"DII {_fmt_number(owner.dii_pct_latest)}% ({_fmt_delta(owner.dii_change)})",
-            ]
-            quarter = f" {escape(owner.latest_quarter)}" if owner.latest_quarter else ""
-            lines.append(f"Shareholding{quarter}: " + "; ".join(parts))
-            if owner.error:
-                lines.append(f"Shareholding note: {escape(owner.error)}")
-        else:
-            lines.append(
-                "Insiders 6m: "
-                f"net shares {_fmt_number(owner.yf_net_shares_6m, 0)}, "
-                f"net {_fmt_number(owner.yf_net_pct_6m)}%"
-            )
-            if owner.error:
-                lines.append(f"Insider note: {escape(owner.error)}")
+        if owner is not None:
+            if owner.market == "india":
+                quarter = f" <i>{escape(owner.latest_quarter)}</i>" if owner.latest_quarter else ""
+                lines.append(f"  <b>Shareholding{quarter}:</b>")
+                lines.append(
+                    f"    Promoter <b>{_fmt_number(owner.promoter_pct_latest)}%</b> ({_fmt_delta(owner.promoter_change)})"
+                    f"  ·  FII <b>{_fmt_number(owner.fii_pct_latest)}%</b> ({_fmt_delta(owner.fii_change)})"
+                    f"  ·  DII <b>{_fmt_number(owner.dii_pct_latest)}%</b> ({_fmt_delta(owner.dii_change)})"
+                )
+                if owner.error:
+                    lines.append(f"  <i>Note: {escape(owner.error)}</i>")
+            else:
+                lines.append(
+                    f"  <b>Insiders 6m:</b> "
+                    f"net <b>{_fmt_number(owner.yf_net_shares_6m, 0)}</b> shares  "
+                    f"(<b>{_fmt_number(owner.yf_net_pct_6m)}%</b>)"
+                )
+                if owner.error:
+                    lines.append(f"  <i>Note: {escape(owner.error)}</i>")
+
     return "\n".join(lines)
 
 
