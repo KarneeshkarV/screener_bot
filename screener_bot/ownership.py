@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import pandas as pd
 
@@ -43,13 +44,22 @@ def _india_name(symbol: str) -> str:
 def fetch_india_shareholding(symbol: str) -> OwnershipStatus:
     name = _india_name(symbol)
     status = OwnershipStatus(symbol=symbol, market="india")
-    try:
-        from openscreener import Stock
-        from screener.insiders import _HttpScraper
+    rows = None
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            from openscreener import Stock
+            from screener.insiders import _HttpScraper
 
-        rows = Stock(name, scraper=_HttpScraper()).shareholding_quarterly()
-    except Exception as exc:
-        status.error = str(exc)
+            rows = Stock(name, scraper=_HttpScraper()).shareholding_quarterly()
+            break
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+
+    if rows is None:
+        status.error = str(last_error) if last_error else "No shareholding data available"
         return status
 
     if not rows or len(rows) < 2:
