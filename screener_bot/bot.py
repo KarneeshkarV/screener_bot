@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -19,6 +19,14 @@ HELP_TEXT = (
     "/status - show bot status\n"
     "/help - show this help"
 )
+
+BOT_COMMANDS = [
+    BotCommand("start", "Start the bot"),
+    BotCommand("help", "Show available commands"),
+    BotCommand("status", "Show bot status"),
+    BotCommand("chat_id", "Show this chat ID"),
+    BotCommand("check_portfolio", "Check every configured holding"),
+]
 
 
 def _authorized(config: BotConfig, update: Update) -> bool:
@@ -86,4 +94,9 @@ def build_application(
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("check_portfolio", check_portfolio))
+    app.post_init = _register_commands
     return app
+
+
+async def _register_commands(app: Application) -> None:
+    await app.bot.set_my_commands(BOT_COMMANDS)
