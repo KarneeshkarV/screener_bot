@@ -32,15 +32,21 @@ class ScheduledScreenerService:
         configured = self.config.scheduled_screener.chat_ids
         return configured or self.config.telegram.allowed_chat_ids
 
-    async def run(self) -> str:
+    async def run(self, query: str | None = None) -> str:
         cfg = self.config.scheduled_screener
-        if not cfg.commands:
+        commands = _matching_commands(cfg.commands, query)
+        if not commands:
+            if query:
+                return (
+                    f"<b>Screener Job</b>\n"
+                    f"No screener command matched <code>{escape(query)}</code>."
+                )
             return "<b>Screener Job</b>\nNo screener commands configured."
 
         results = []
-        for command in cfg.commands:
+        for command in commands:
             results.append(await self._run_command(command))
-        return self._format_report(results)
+        return self._format_report(results, show_all=bool(query))
 
     async def _run_command(self, command: ScreenerCommandConfig) -> CommandResult:
         cfg = self.config.scheduled_screener
@@ -76,7 +82,7 @@ class ScheduledScreenerService:
         except Exception as exc:
             return CommandResult(command, None, "", str(exc))
 
-    def _format_report(self, results: list[CommandResult]) -> str:
+    def _format_report(self, results: list[CommandResult], show_all: bool = False) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         lines = [f"<b>Screener Job</b> <i>{escape(timestamp)}</i>"]
         for result in results:
@@ -88,9 +94,13 @@ class ScheduledScreenerService:
             output = result.stdout.strip()
             error = result.stderr.strip()
             if output:
-                lines.extend(_format_output(result.config.label, output))
+                lines.extend(_format_output(result.config.label, output, show_all=show_all))
             if error:
-                lines.append(f"<i>stderr:</i>\n<pre>{escape(_truncate(error))}</pre>")
+                filtered_error = _filter_stderr(error, success=result.returncode == 0)
+                if filtered_error:
+                    lines.append(
+                        f"<i>stderr:</i>\n<pre>{escape(_truncate(filtered_error))}</pre>"
+                    )
             if not output and not error:
                 lines.append("<i>No output.</i>")
         return "\n".join(lines)
@@ -102,25 +112,58 @@ def _truncate(value: str, limit: int = 650) -> str:
     return value[: limit - 32].rstrip() + "\n... output truncated ..."
 
 
-def _format_output(label: str, output: str) -> list[str]:
+def _matching_commands(
+    commands: list[ScreenerCommandConfig], query: str | None
+) -> list[ScreenerCommandConfig]:
+    if not query or not query.strip():
+        return commands
+    terms = query.lower().split()
+    return [
+        command
+        for command in commands
+        if all(term in command.label.lower() for term in terms)
+    ]
+
+
+def _format_output(label: str, output: str, show_all: bool = False) -> list[str]:
     rows = _parse_csv_rows(output)
     if not rows:
         return [f"<pre>{escape(_truncate(output))}</pre>"]
+    limit = len(rows) if show_all else None
     if "ema" in label.lower():
-        return _format_ema_rows(rows)
+        return _format_ema_rows(rows, limit=limit or 12)
     if "holding" in label.lower() or "insider" in label.lower() or "promoter" in label.lower():
-        return _format_holding_rows(rows)
-    return _format_generic_rows(rows)
+        return _format_holding_rows(rows, limit=limit or 10)
+    return _format_generic_rows(rows, limit=limit or 10)
 
 
 def _parse_csv_rows(output: str) -> list[dict[str, str]]:
     try:
-        reader = csv.DictReader(StringIO(output))
+        csv_text = _extract_csv_text(output)
+        if not csv_text:
+            return []
+        reader = csv.DictReader(StringIO(csv_text))
         if not reader.fieldnames or len(reader.fieldnames) < 2:
             return []
         return [{key: value for key, value in row.items()} for row in reader]
     except csv.Error:
         return []
+
+
+def _extract_csv_text(output: str) -> str:
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if "," not in line:
+            continue
+        if (
+            lowered.startswith("ticker,")
+            or lowered.startswith("name,")
+            or "promoter_change" in lowered
+            or "yf_net_shares_6m" in lowered
+        ):
+            return "\n".join(lines[index:])
+    return ""
 
 
 def _format_ema_rows(rows: list[dict[str, str]], limit: int = 12) -> list[str]:
@@ -241,12 +284,24 @@ def _fmt_shares(value: str | None) -> str:
     return f"{sign}{magnitude:.0f}"
 
 
+def _filter_stderr(error: str, success: bool) -> str:
+    lines = [line for line in error.splitlines() if line.strip()]
+    if success:
+        lines = [
+            line
+            for line in lines
+            if "HTTP Error 404" not in line and "Quote not found" not in line
+        ]
+    return "\n".join(lines)
+
+
 async def send_screener_report(
     context: ContextTypes.DEFAULT_TYPE,
     service: ScheduledScreenerService,
     chat_ids: list[int] | None = None,
+    query: str | None = None,
 ) -> None:
-    report = await service.run()
+    report = await service.run(query=query)
     targets = chat_ids or service.chat_ids()
     for chat_id in targets:
         for message in split_messages(report):

@@ -18,6 +18,7 @@ from .technical import TechnicalService
 HELP_TEXT = (
     "Commands:\n"
     "/run - run EMA and holding-change screener now\n"
+    "/run india ema - run one screener and show all returned rows\n"
     "/check_portfolio - check every configured holding\n"
     "/status - show bot status\n"
     "/help - show this help"
@@ -93,10 +94,15 @@ def build_application(
 
     async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.effective_chat and update.message:
-            await update.message.reply_text("Running screener...")
+            query = " ".join(context.args) if context.args else None
+            label = f"Running screener for {query}..." if query else "Running screener..."
+            await update.message.reply_text(label)
             try:
                 await send_screener_report(
-                    context, screener_service, [update.effective_chat.id]
+                    context,
+                    screener_service,
+                    [update.effective_chat.id],
+                    query=query,
                 )
             except Exception:
                 logging.exception("scheduled screener manual run failed")
