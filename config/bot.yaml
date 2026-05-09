@@ -1,0 +1,36 @@
+timezone: Asia/Kolkata
+
+telegram:
+  allowed_chat_ids:
+    - 5526359855
+
+portfolio:
+  - symbol: NSE:RELIANCE
+    market: india
+    avg_price: 2800
+    ruleset: swing_momentum
+
+  - symbol: AAPL
+    market: us
+    avg_price: 180
+    ruleset: swing_momentum
+
+rulesets:
+  swing_momentum:
+    entry:
+      all:
+        - expression: "rsi(close, 14) > 55"
+        - expression: "close > ema(close, 20)"
+    exit:
+      any:
+        - expression: "rsi(close, 14) < 45"
+        - expression: "close < ema(close, 20)"
+
+technical_snapshot:
+  expressions:
+    - label: RSI 14
+      expression: "rsi(close, 14)"
+    - label: Above EMA20
+      expression: "close > ema(close, 20)"
+    - label: Above EMA50
+      expression: "close > ema(close, 50)"

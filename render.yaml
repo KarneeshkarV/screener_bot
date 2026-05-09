@@ -1,0 +1,9 @@
+services:
+  - type: worker
+    name: screener-bot
+    runtime: python
+    buildCommand: uv sync --frozen
+    startCommand: uv run python -m screener_bot
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12
