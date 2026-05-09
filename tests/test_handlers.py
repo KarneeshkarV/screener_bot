@@ -98,3 +98,35 @@ def test_scheduled_screener_service_runs_command() -> None:
 
     assert "<b>Smoke</b> (ok)" in report
     assert "ok" in report
+
+
+def test_scheduled_screener_formats_csv_output() -> None:
+    config = BotConfig.model_validate(
+        {
+            "telegram": {"allowed_chat_ids": [1]},
+            "portfolio": [{"symbol": "AAPL", "market": "us", "ruleset": "x"}],
+            "rulesets": {"x": {}},
+            "scheduled_screener": {
+                "commands": [
+                    {
+                        "label": "India EMA",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            (
+                                "print('name,close,change,setup_score');"
+                                "print('ATHERENERG,915.05,0.87,80.39')"
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    report = asyncio.run(ScheduledScreenerService(config).run())
+
+    assert "┏" not in report
+    assert "<pre>Symbol" in report
+    assert "ATHERENERG" in report
+    assert "+0.87%" in report
