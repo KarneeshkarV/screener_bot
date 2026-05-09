@@ -9,7 +9,10 @@ def test_loads_config() -> None:
     config = load_config("config/bot.yaml")
     assert all(isinstance(chat_id, int) for chat_id in config.telegram.allowed_chat_ids)
     assert config.telegram.allowed_chat_ids
-    assert [item.market for item in config.portfolio] == ["india", "us"]
+    assert {item.market for item in config.portfolio} == {"india", "us"}
+    assert config.scheduled_screener.enabled is True
+    assert config.scheduled_screener.times == ["16:00", "02:30"]
+    assert len(config.scheduled_screener.commands) == 4
 
 
 def test_rejects_missing_symbol() -> None:

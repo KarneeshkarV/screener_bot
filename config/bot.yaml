@@ -4,6 +4,23 @@ telegram:
   allowed_chat_ids:
     - 5526359855
 
+scheduled_screener:
+  enabled: true
+  times:
+    - "16:00"
+    - "02:30"
+  working_directory: /home/karneeshkar/Desktop/personal/screener
+  timeout_seconds: 300
+  commands:
+    - label: India EMA
+      command: ["uv", "run", "screener", "screen", "-m", "india", "-c", "ema", "-n", "30"]
+    - label: US EMA
+      command: ["uv", "run", "screener", "screen", "-m", "us", "-c", "ema", "-n", "30"]
+    - label: India Promoter Holding Change
+      command: ["uv", "run", "screener", "promoter-buys", "-m", "india", "--min-change", "0", "-n", "30"]
+    - label: US Insider Holding Change
+      command: ["uv", "run", "screener", "promoter-buys", "-m", "us", "-n", "30"]
+
 portfolio:
   # US holdings
   - symbol: AAPL
