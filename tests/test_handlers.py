@@ -33,6 +33,22 @@ def test_long_output_is_split() -> None:
     assert all(len(message) <= 100 for message in messages)
 
 
+def test_pre_blocks_are_split_with_balanced_tags() -> None:
+    text = (
+        "<b>Report</b>\n<pre>"
+        + "\n".join(f"SYM{i}  10  20" for i in range(30))
+        + "</pre>"
+    )
+
+    messages = split_messages(text, limit=100)
+
+    assert len(messages) > 1
+    assert all(len(message) <= 100 for message in messages)
+    assert all(
+        message.count("<pre>") == message.count("</pre>") for message in messages
+    )
+
+
 def test_run_all_command_is_registered() -> None:
     from screener_bot.bot import BOT_COMMANDS, HELP_TEXT
 

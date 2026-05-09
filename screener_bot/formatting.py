@@ -129,18 +129,79 @@ def split_messages(text: str, limit: int = SAFE_LIMIT) -> list[str]:
     messages: list[str] = []
     current: list[str] = []
     current_len = 0
-    for line in text.splitlines():
-        needed = len(line) + 1
-        if current and current_len + needed > limit:
+
+    def flush_current() -> None:
+        nonlocal current, current_len
+        if current:
             messages.append("\n".join(current))
             current = []
             current_len = 0
+
+    in_pre = False
+    pre_lines: list[str] = []
+    for line in text.splitlines():
+        if in_pre:
+            pre_lines.append(line)
+            if "</pre>" in line:
+                flush_current()
+                messages.extend(_split_pre_block("\n".join(pre_lines), limit))
+                pre_lines = []
+                in_pre = False
+            continue
+        if "<pre>" in line and "</pre>" not in line:
+            flush_current()
+            pre_lines = [line]
+            in_pre = True
+            continue
+
+        needed = len(line) + 1
+        if current and current_len + needed > limit:
+            flush_current()
         if needed > limit:
-            for start in range(0, len(line), limit):
-                messages.append(line[start : start + limit])
+            flush_current()
+            messages.extend(_split_long_line(line, limit))
+            continue
+        current.append(line)
+        current_len += needed
+    if pre_lines:
+        flush_current()
+        messages.extend(_split_pre_block("\n".join(pre_lines), limit))
+    flush_current()
+    return messages
+
+
+def _split_long_line(line: str, limit: int) -> list[str]:
+    return [line[start : start + limit] for start in range(0, len(line), limit)]
+
+
+def _split_pre_block(block: str, limit: int) -> list[str]:
+    if len(block) <= limit:
+        return [block]
+    prefix = "<pre>"
+    suffix = "</pre>"
+    if not block.startswith(prefix) or not block.endswith(suffix):
+        return _split_long_line(block, limit)
+
+    body = block[len(prefix) : -len(suffix)]
+    chunk_limit = limit - len(prefix) - len(suffix)
+    if chunk_limit <= 0:
+        return _split_long_line(block, limit)
+
+    messages: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in body.splitlines():
+        needed = len(line) + 1
+        if current and current_len + needed > chunk_limit:
+            messages.append(prefix + "\n".join(current) + suffix)
+            current = []
+            current_len = 0
+        if needed > chunk_limit:
+            for part in _split_long_line(line, chunk_limit):
+                messages.append(prefix + part + suffix)
             continue
         current.append(line)
         current_len += needed
     if current:
-        messages.append("\n".join(current))
+        messages.append(prefix + "\n".join(current) + suffix)
     return messages
