@@ -17,8 +17,10 @@ from .technical import TechnicalService
 
 HELP_TEXT = (
     "Commands:\n"
-    "/run - run EMA and holding-change screener now\n"
-    "/run india ema - run one screener and show all returned rows\n"
+    "/run - run screener changes now\n"
+    "/run india ema - run one screener and show added/removed entries\n"
+    "/run_all - run all screeners and show the current lists\n"
+    "/run_all india ema - run one screener and show all returned rows\n"
     "/check_portfolio - check every configured holding\n"
     "/status - show bot status\n"
     "/help - show this help"
@@ -28,7 +30,8 @@ BOT_COMMANDS = [
     BotCommand("start", "Start the bot"),
     BotCommand("help", "Show available commands"),
     BotCommand("status", "Show bot status"),
-    BotCommand("run", "Run EMA and holding-change screener now"),
+    BotCommand("run", "Run screener changes now"),
+    BotCommand("run_all", "Run all screeners and show current lists"),
     BotCommand("check_portfolio", "Check every configured holding"),
 ]
 
@@ -95,7 +98,11 @@ def build_application(
     async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.effective_chat and update.message:
             query = " ".join(context.args) if context.args else None
-            label = f"Running screener for {query}..." if query else "Running screener..."
+            label = (
+                f"Running screener changes for {query}..."
+                if query
+                else "Running screener changes..."
+            )
             await update.message.reply_text(label)
             try:
                 await send_screener_report(
@@ -108,6 +115,27 @@ def build_application(
                 logging.exception("scheduled screener manual run failed")
                 await update.message.reply_text("Screener run failed. See logs.")
 
+    async def run_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await _guard(config, update) and update.effective_chat and update.message:
+            query = " ".join(context.args) if context.args else None
+            label = (
+                f"Running full screener for {query}..."
+                if query
+                else "Running full screener..."
+            )
+            await update.message.reply_text(label)
+            try:
+                await send_screener_report(
+                    context,
+                    screener_service,
+                    [update.effective_chat.id],
+                    query=query,
+                    full_list=True,
+                )
+            except Exception:
+                logging.exception("scheduled screener full manual run failed")
+                await update.message.reply_text("Screener run failed. See logs.")
+
     async def check_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update):
             await _run_portfolio_check(update)
@@ -116,6 +144,7 @@ def build_application(
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("run", run))
+    app.add_handler(CommandHandler("run_all", run_all))
     app.add_handler(CommandHandler("check_portfolio", check_portfolio))
     app.post_init = _post_init(config, screener_service)
     return app

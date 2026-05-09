@@ -33,6 +33,13 @@ def test_long_output_is_split() -> None:
     assert all(len(message) <= 100 for message in messages)
 
 
+def test_run_all_command_is_registered() -> None:
+    from screener_bot.bot import BOT_COMMANDS, HELP_TEXT
+
+    assert "/run_all" in HELP_TEXT
+    assert "run_all" in {command.command for command in BOT_COMMANDS}
+
+
 def test_schedules_configured_screener_times() -> None:
     from screener_bot.bot import _schedule_screener_jobs
 
@@ -94,7 +101,7 @@ def test_scheduled_screener_service_runs_command() -> None:
         }
     )
 
-    report = asyncio.run(ScheduledScreenerService(config).run())
+    report = asyncio.run(ScheduledScreenerService(config).run(full_list=True))
 
     assert "<b>Smoke</b> (ok)" in report
     assert "ok" in report
@@ -124,7 +131,7 @@ def test_scheduled_screener_formats_csv_output() -> None:
         }
     )
 
-    report = asyncio.run(ScheduledScreenerService(config).run())
+    report = asyncio.run(ScheduledScreenerService(config).run(full_list=True))
 
     assert "┏" not in report
     assert "<pre>Symbol" in report
@@ -158,7 +165,9 @@ def test_scheduled_screener_parses_csv_after_progress_lines() -> None:
         }
     )
 
-    report = asyncio.run(ScheduledScreenerService(config).run("india promoter"))
+    report = asyncio.run(
+        ScheduledScreenerService(config).run("india promoter", full_list=True)
+    )
 
     assert "Universe: 192" not in report
     assert "promoter_pct_latest" not in report
@@ -191,8 +200,100 @@ def test_specific_screener_query_shows_all_rows() -> None:
         }
     )
 
-    report = asyncio.run(ScheduledScreenerService(config).run("india ema"))
+    report = asyncio.run(
+        ScheduledScreenerService(config).run("india ema", full_list=True)
+    )
 
     assert "SYM12" in report
     assert "+1 more rows" not in report
     assert "US EMA" not in report
+
+
+def test_delta_report_first_run_shows_all_rows_as_added(tmp_path) -> None:
+    config = BotConfig.model_validate(
+        {
+            "telegram": {"allowed_chat_ids": [1]},
+            "portfolio": [{"symbol": "AAPL", "market": "us", "ruleset": "x"}],
+            "rulesets": {"x": {}},
+            "scheduled_screener": {
+                "commands": [
+                    {
+                        "label": "India EMA",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            (
+                                "print('name,close,change,setup_score');"
+                                "print('AAA,10,1,50');"
+                                "print('BBB,20,2,60')"
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    service = ScheduledScreenerService(config, tmp_path / "snapshots.json")
+    report = asyncio.run(service.run())
+
+    assert "<b>Screener Changes</b>" in report
+    assert "<b>Added:</b> AAA, BBB" in report
+    assert "<b>Removed:</b>" not in report
+
+
+def test_delta_report_shows_added_and_removed_only(tmp_path) -> None:
+    snapshot_path = tmp_path / "snapshots.json"
+    first_config = BotConfig.model_validate(
+        {
+            "telegram": {"allowed_chat_ids": [1]},
+            "portfolio": [{"symbol": "AAPL", "market": "us", "ruleset": "x"}],
+            "rulesets": {"x": {}},
+            "scheduled_screener": {
+                "commands": [
+                    {
+                        "label": "India EMA",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            (
+                                "print('name,close,change,setup_score');"
+                                "print('AAA,10,1,50');"
+                                "print('BBB,20,2,60')"
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+    second_config = BotConfig.model_validate(
+        {
+            "telegram": {"allowed_chat_ids": [1]},
+            "portfolio": [{"symbol": "AAPL", "market": "us", "ruleset": "x"}],
+            "rulesets": {"x": {}},
+            "scheduled_screener": {
+                "commands": [
+                    {
+                        "label": "India EMA",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            (
+                                "print('name,close,change,setup_score');"
+                                "print('AAA,11,3,70');"
+                                "print('CCC,30,4,80')"
+                            ),
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    asyncio.run(ScheduledScreenerService(first_config, snapshot_path).run())
+    report = asyncio.run(ScheduledScreenerService(second_config, snapshot_path).run())
+
+    assert "<b>Added:</b> CCC" in report
+    assert "<b>Removed:</b> BBB" in report
+    assert "AAA,11" not in report

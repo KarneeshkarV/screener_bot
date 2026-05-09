@@ -1044,7 +1044,7 @@ wheels = [
 [[package]]
 name = "screener"
 version = "0.1.0"
-source = { git = "https://github.com/KarneeshkarV/screener.git#a874ac8351d88c2662e5b587140fcdd6d12d210c" }
+source = { git = "https://github.com/KarneeshkarV/screener.git#b5208f98ed117ef48cfb9e0c36839d1c9869b883" }
 dependencies = [
     { name = "click" },
     { name = "jugaad-data" },

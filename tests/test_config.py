@@ -12,7 +12,7 @@ def test_loads_config() -> None:
     assert {item.market for item in config.portfolio} == {"india", "us"}
     assert config.scheduled_screener.enabled is True
     assert config.scheduled_screener.times == ["16:00", "02:30"]
-    assert len(config.scheduled_screener.commands) == 4
+    assert len(config.scheduled_screener.commands) == 6
 
 
 def test_rejects_missing_symbol() -> None:

@@ -13,3 +13,9 @@ wheels/
 .env
 .env.*
 !.env.example
+
+# Local screener state
+.screener/
+.screener_bot/
+history.db
+screener_snapshots.json

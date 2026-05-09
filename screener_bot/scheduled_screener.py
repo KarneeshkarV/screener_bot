@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -25,14 +26,23 @@ class CommandResult:
 
 
 class ScheduledScreenerService:
-    def __init__(self, config: BotConfig) -> None:
+    def __init__(
+        self,
+        config: BotConfig,
+        snapshot_path: Path | str | None = None,
+    ) -> None:
         self.config = config
+        self.snapshot_path = (
+            Path(snapshot_path)
+            if snapshot_path is not None
+            else Path.home() / ".screener_bot" / "screener_snapshots.json"
+        )
 
     def chat_ids(self) -> list[int]:
         configured = self.config.scheduled_screener.chat_ids
         return configured or self.config.telegram.allowed_chat_ids
 
-    async def run(self, query: str | None = None) -> str:
+    async def run(self, query: str | None = None, full_list: bool = False) -> str:
         cfg = self.config.scheduled_screener
         commands = _matching_commands(cfg.commands, query)
         if not commands:
@@ -46,7 +56,9 @@ class ScheduledScreenerService:
         results = []
         for command in commands:
             results.append(await self._run_command(command))
-        return self._format_report(results, show_all=bool(query))
+        if full_list:
+            return self._format_report(results, show_all=True)
+        return self._format_delta_report(results)
 
     async def _run_command(self, command: ScreenerCommandConfig) -> CommandResult:
         cfg = self.config.scheduled_screener
@@ -105,6 +117,80 @@ class ScheduledScreenerService:
                 lines.append("<i>No output.</i>")
         return "\n".join(lines)
 
+    def _format_delta_report(self, results: list[CommandResult]) -> str:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [f"<b>Screener Changes</b> <i>{escape(timestamp)}</i>"]
+        snapshots = self._load_snapshots()
+        changed = False
+
+        for result in results:
+            status = "timed out" if result.timed_out else f"exit {result.returncode}"
+            if result.returncode == 0 and not result.timed_out:
+                status = "ok"
+            lines.append("")
+            lines.append(f"<b>{escape(result.config.label)}</b> ({escape(status)})")
+
+            output = result.stdout.strip()
+            error = result.stderr.strip()
+            rows = _parse_csv_rows(output) if output else []
+            if result.returncode == 0 and not result.timed_out and rows:
+                current = sorted(
+                    {
+                        identity
+                        for row in rows
+                        if (identity := _row_identity(row)) is not None
+                    }
+                )
+                previous = snapshots.get(result.config.label)
+                previous_set = set(previous or [])
+                current_set = set(current)
+                added = sorted(current_set - previous_set)
+                removed = sorted(previous_set - current_set)
+                if previous is None:
+                    added = current
+                    removed = []
+
+                lines.extend(_format_delta_rows(added, removed))
+                snapshots[result.config.label] = current
+                changed = True
+            else:
+                if output:
+                    lines.extend(_format_output(result.config.label, output, show_all=False))
+                if error:
+                    filtered_error = _filter_stderr(error, success=result.returncode == 0)
+                    if filtered_error:
+                        lines.append(
+                            f"<i>stderr:</i>\n<pre>{escape(_truncate(filtered_error))}</pre>"
+                        )
+                if not output and not error:
+                    lines.append("<i>No output.</i>")
+
+        if changed:
+            self._save_snapshots(snapshots)
+        return "\n".join(lines)
+
+    def _load_snapshots(self) -> dict[str, list[str]]:
+        try:
+            with self.snapshot_path.open("r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        snapshots: dict[str, list[str]] = {}
+        for label, symbols in raw.items():
+            if isinstance(label, str) and isinstance(symbols, list):
+                snapshots[label] = [str(symbol) for symbol in symbols]
+        return snapshots
+
+    def _save_snapshots(self, snapshots: dict[str, list[str]]) -> None:
+        try:
+            self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.snapshot_path.open("w", encoding="utf-8") as fh:
+                json.dump(snapshots, fh, indent=2, sort_keys=True)
+        except OSError:
+            return
+
 
 def _truncate(value: str, limit: int = 650) -> str:
     if len(value) <= limit:
@@ -135,6 +221,25 @@ def _format_output(label: str, output: str, show_all: bool = False) -> list[str]
     if "holding" in label.lower() or "insider" in label.lower() or "promoter" in label.lower():
         return _format_holding_rows(rows, limit=limit or 10)
     return _format_generic_rows(rows, limit=limit or 10)
+
+
+def _row_identity(row: dict[str, str]) -> str | None:
+    for key in ("name", "ticker", "symbol"):
+        value = (row.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _format_delta_rows(added: list[str], removed: list[str]) -> list[str]:
+    if not added and not removed:
+        return ["<i>No changes since last run.</i>"]
+    lines = []
+    if added:
+        lines.append(f"<b>Added:</b> {escape(', '.join(added))}")
+    if removed:
+        lines.append(f"<b>Removed:</b> {escape(', '.join(removed))}")
+    return lines
 
 
 def _parse_csv_rows(output: str) -> list[dict[str, str]]:
@@ -300,8 +405,9 @@ async def send_screener_report(
     service: ScheduledScreenerService,
     chat_ids: list[int] | None = None,
     query: str | None = None,
+    full_list: bool = False,
 ) -> None:
-    report = await service.run(query=query)
+    report = await service.run(query=query, full_list=full_list)
     targets = chat_ids or service.chat_ids()
     for chat_id in targets:
         for message in split_messages(report):

@@ -16,6 +16,10 @@ scheduled_screener:
       command: ["uv", "run", "screener", "screen", "-m", "india", "-c", "ema", "-n", "30", "--csv"]
     - label: US EMA
       command: ["uv", "run", "screener", "screen", "-m", "us", "-c", "ema", "-n", "30", "--csv"]
+    - label: India GARP
+      command: ["uv", "run", "screener", "garp", "-m", "india", "-n", "30", "--csv"]
+    - label: US GARP
+      command: ["uv", "run", "screener", "garp", "-m", "us", "-n", "30", "--csv"]
     - label: India Promoter Holding Change
       command: ["uv", "run", "screener", "promoter-buys", "-m", "india", "--min-change", "0", "-n", "30", "--csv"]
     - label: US Insider Holding Change
