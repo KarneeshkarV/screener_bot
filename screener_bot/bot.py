@@ -77,23 +77,48 @@ def build_application(
             await update.message.reply_text(
                 f"Configured holdings: {len(config.portfolio)}\n"
                 f"Timezone: {config.timezone}\n"
-                f"Scheduled screener: {_scheduled_status(config)}"
+                f"Scheduled screener: {_scheduled_status(config)}\n"
+                f"Scheduled portfolio check: daily at "
+                f"{PORTFOLIO_CHECK_TIME} {config.timezone}"
             )
+
+    def _portfolio_report() -> str:
+        technical = technical_service.check_portfolio()
+        ownership = ownership_service.check_portfolio(config.portfolio)
+        return format_portfolio_report(technical, ownership)
 
     async def _run_portfolio_check(update: Update) -> None:
         if not update.message:
             return
         await update.message.reply_text("Checking portfolio...")
         try:
-            technical = technical_service.check_portfolio()
-            ownership = ownership_service.check_portfolio(config.portfolio)
-            report = format_portfolio_report(technical, ownership)
+            report = _portfolio_report()
         except Exception:
             logging.exception("portfolio check failed")
             await update.message.reply_text("Portfolio check failed. See logs.")
             return
         for message in split_messages(report):
             await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+    async def _scheduled_portfolio_check(
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        try:
+            report = _portfolio_report()
+        except Exception:
+            logging.exception("scheduled portfolio check failed")
+            return
+        targets = (
+            config.scheduled_screener.chat_ids
+            or config.telegram.allowed_chat_ids
+        )
+        for chat_id in targets:
+            for message in split_messages(report):
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode=ParseMode.HTML,
+                )
 
     async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.effective_chat and update.message:
@@ -146,7 +171,7 @@ def build_application(
     app.add_handler(CommandHandler("run", run))
     app.add_handler(CommandHandler("run_all", run_all))
     app.add_handler(CommandHandler("check_portfolio", check_portfolio))
-    app.post_init = _post_init(config, screener_service)
+    app.post_init = _post_init(config, screener_service, _scheduled_portfolio_check)
     return app
 
 
@@ -154,12 +179,37 @@ async def _register_commands(app: Application) -> None:
     await app.bot.set_my_commands(BOT_COMMANDS)
 
 
-def _post_init(config: BotConfig, screener_service: ScheduledScreenerService):
+def _post_init(
+    config: BotConfig,
+    screener_service: ScheduledScreenerService,
+    portfolio_callback,
+):
     async def post_init(app: Application) -> None:
         await _register_commands(app)
         _schedule_screener_jobs(app, config, screener_service)
+        _schedule_portfolio_jobs(app, config, portfolio_callback)
 
     return post_init
+
+
+PORTFOLIO_CHECK_TIME = "06:00"
+
+
+def _schedule_portfolio_jobs(app: Application, config: BotConfig, callback) -> None:
+    if app.job_queue is None:
+        logging.warning(
+            "scheduled portfolio check disabled: application has no job queue"
+        )
+        return
+
+    tz = ZoneInfo(config.timezone)
+    hour, minute = (int(part) for part in PORTFOLIO_CHECK_TIME.split(":"))
+    run_time = time(hour=hour, minute=minute, tzinfo=tz)
+    app.job_queue.run_daily(
+        callback,
+        time=run_time,
+        name="scheduled-portfolio-check",
+    )
 
 
 def _schedule_screener_jobs(
