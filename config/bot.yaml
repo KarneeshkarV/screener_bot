@@ -42,6 +42,18 @@ portfolio:
     avg_price: 179.20
     ruleset: swing_momentum
 
+  - symbol: NOW
+    market: us
+    ruleset: swing_momentum
+
+  - symbol: OKLO
+    market: us
+    ruleset: swing_momentum
+
+  - symbol: DELL
+    market: us
+    ruleset: swing_momentum
+
   # India (NSE) holdings
   - symbol: NSE:ATHERENERG
     market: india
