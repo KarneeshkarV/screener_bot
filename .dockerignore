@@ -1,0 +1,28 @@
+# Secrets — never copy real env files into the image.
+.env
+.env.*
+!.env.example
+
+# Local virtualenv (rebuilt inside the image).
+.venv
+
+# VCS / CI
+.git
+.gitignore
+
+# Python caches
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+
+# Local screener/bot state — must not leak into the image.
+data/
+.screener/
+.screener_bot/
+history.db
+screener_snapshots.json
