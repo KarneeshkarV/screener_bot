@@ -27,6 +27,27 @@ class RuleStatus:
 
 
 @dataclass
+class DetailStatus:
+    symbol: str
+    market: str | None = None
+    ticker: str | None = None
+    close: float | None = None
+    daily_change_pct: float | None = None
+    rsi14: float | None = None
+    ema20: float | None = None
+    ema50: float | None = None
+    ema200: float | None = None
+    sma50: float | None = None
+    sma200: float | None = None
+    atr14: float | None = None
+    high_52w: float | None = None
+    low_52w: float | None = None
+    avg_volume_20: float | None = None
+    last_volume: float | None = None
+    error: str | None = None
+
+
+@dataclass
 class TechnicalStatus:
     item: PortfolioItem
     ticker: str
@@ -118,3 +139,73 @@ class TechnicalService:
 
             statuses.append(status)
         return statuses
+
+    def _candidate_markets(self, symbol: str, market: str | None) -> list[str]:
+        sym = symbol.strip().upper()
+        if ":" in sym:
+            exch = sym.split(":", 1)[0]
+            return ["india"] if exch in {"NSE", "BSE"} else ["us"]
+        if sym.endswith((".NS", ".BO")):
+            return ["india"]
+        if market in {"us", "india"}:
+            return [market]
+        return ["us", "india"]
+
+    def detail(self, symbol: str, market: str | None = None) -> DetailStatus:
+        status = DetailStatus(symbol=symbol)
+        end = date.today() + timedelta(days=1)
+        start = end - timedelta(days=370)
+
+        bars = None
+        for candidate in self._candidate_markets(symbol, market):
+            ticker = tv_to_yf(symbol, candidate)
+            try:
+                frames = self.price_fetcher.fetch([ticker], start, end)
+            except Exception as exc:  # network/data failures shouldn't crash the bot
+                status.error = f"Price fetch failed: {exc}"
+                continue
+            candidate_bars = frames.get(ticker)
+            if candidate_bars is not None and not candidate_bars.empty:
+                status.market = candidate
+                status.ticker = ticker
+                bars = candidate_bars.sort_index()
+                status.error = None
+                break
+
+        if bars is None:
+            if status.error is None:
+                status.error = "No price data available"
+            return status
+
+        closes = bars["close"].dropna()
+        status.close = float(closes.iloc[-1])
+        if len(closes) >= 2:
+            prev = float(closes.iloc[-2])
+            if prev:
+                status.daily_change_pct = ((status.close - prev) / prev) * 100
+
+        if "volume" in bars:
+            volume = bars["volume"].dropna()
+            if not volume.empty:
+                status.last_volume = float(volume.iloc[-1])
+
+        exprs = {
+            "rsi14": "rsi(close, 14)",
+            "ema20": "ema(close, 20)",
+            "ema50": "ema(close, 50)",
+            "ema200": "ema(close, 200)",
+            "sma50": "sma(close, 50)",
+            "sma200": "sma(close, 200)",
+            "atr14": "atr(14)",
+            "high_52w": "highest(high, 252)",
+            "low_52w": "lowest(low, 252)",
+            "avg_volume_20": "sma(volume, 20)",
+        }
+        for attr, expr in exprs.items():
+            try:
+                value = _eval_expression(expr, bars)
+                if value is not None:
+                    setattr(status, attr, float(value))
+            except Exception:  # individual indicator failure is non-fatal
+                continue
+        return status

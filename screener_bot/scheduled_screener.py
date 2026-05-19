@@ -214,6 +214,11 @@ def _matching_commands(
 def _format_output(label: str, output: str, show_all: bool = False) -> list[str]:
     rows = _parse_csv_rows(output)
     if not rows:
+        # A successful run that yields only a header (or a stray token like
+        # "garp_score") means the universe came back empty — usually upstream
+        # data was unreachable. Show that instead of a confusing raw dump.
+        if len(output.splitlines()) <= 1 and len(output) <= 80:
+            return ["<i>No rows returned (upstream data fetch may have failed).</i>"]
         return [f"<pre>{escape(_truncate(output))}</pre>"]
     limit = len(rows) if show_all else None
     if "ema" in label.lower():
@@ -389,14 +394,39 @@ def _fmt_shares(value: str | None) -> str:
     return f"{sign}{magnitude:.0f}"
 
 
+_NOISE_MARKERS = (
+    "Bytecode compiled",
+    "Universe:",
+    "Enriching",
+)
+
+
 def _filter_stderr(error: str, success: bool) -> str:
     lines = [line for line in error.splitlines() if line.strip()]
+    # uv/runtime progress chatter is never useful in a Telegram report.
+    lines = [
+        line for line in lines if not any(m in line for m in _NOISE_MARKERS)
+    ]
     if success:
         lines = [
             line
             for line in lines
             if "HTTP Error 404" not in line and "Quote not found" not in line
         ]
+
+    # Collapse repeated network-failure spam into a single counted line.
+    network_failures = [
+        line
+        for line in lines
+        if "Network is unreachable" in line or "failed for company page" in line
+    ]
+    if network_failures:
+        kept = [line for line in lines if line not in network_failures]
+        kept.append(
+            f"⚠️ {len(network_failures)} network failures "
+            f"(data source unreachable)"
+        )
+        lines = kept
     return "\n".join(lines)
 
 

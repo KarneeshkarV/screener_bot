@@ -5,7 +5,7 @@ from html import escape
 from typing import Any
 
 from .ownership import OwnershipStatus
-from .technical import TechnicalStatus
+from .technical import DetailStatus, TechnicalStatus
 
 
 TELEGRAM_LIMIT = 4096
@@ -119,6 +119,89 @@ def format_portfolio_report(
                 )
                 if owner.error:
                     lines.append(f"  <i>Note: {escape(owner.error)}</i>")
+
+    return "\n".join(lines)
+
+
+def _rsi_zone(value: float) -> str:
+    if value >= 70:
+        return "overbought 🔴"
+    if value >= 55:
+        return "bullish 🟢"
+    if value <= 30:
+        return "oversold 🟣"
+    if value <= 45:
+        return "bearish 🔻"
+    return "neutral ⚪"
+
+
+def _vs(close: float, level: float | None) -> str:
+    if level is None:
+        return "n/a"
+    pct = ((close - level) / level) * 100
+    arrow = "▲" if close >= level else "▼"
+    return f"{level:.2f}  ({arrow}{abs(pct):.2f}%)"
+
+
+def format_detail_report(status: DetailStatus) -> str:
+    sym = status.symbol.split(":")[-1]
+    flag = "🇮🇳" if status.market == "india" else "🇺🇸" if status.market == "us" else ""
+    lines = [f"<b>📈 {escape(sym)}</b> {flag}".rstrip()]
+
+    if status.error and status.close is None:
+        lines.append(f"<i>{escape(status.error)}</i>")
+        return "\n".join(lines)
+
+    cur = _currency(status.market or "us")
+    daily = (
+        f"  ({status.daily_change_pct:+.2f}%)"
+        if status.daily_change_pct is not None
+        else ""
+    )
+    lines.append(f"<b>Price:</b> {cur}{_fmt_number(status.close)}{daily}")
+
+    if status.rsi14 is not None:
+        lines.append(
+            f"<b>RSI 14:</b> {status.rsi14:.1f}  <i>{_rsi_zone(status.rsi14)}</i>"
+        )
+
+    close = status.close or 0.0
+    lines.append("")
+    lines.append("<b>Moving averages</b> <i>(price vs)</i>")
+    lines.append(f"<pre>EMA20   {_vs(close, status.ema20)}")
+    lines.append(f"EMA50   {_vs(close, status.ema50)}")
+    lines.append(f"EMA200  {_vs(close, status.ema200)}")
+    lines.append(f"SMA50   {_vs(close, status.sma50)}")
+    lines.append(f"SMA200  {_vs(close, status.sma200)}</pre>")
+
+    if status.sma50 is not None and status.sma200 is not None:
+        if status.sma50 >= status.sma200:
+            lines.append("<b>Trend:</b> golden cross — SMA50 ≥ SMA200 ✅")
+        else:
+            lines.append("<b>Trend:</b> death cross — SMA50 &lt; SMA200 ⚠️")
+
+    if status.atr14 is not None and close:
+        atr_pct = (status.atr14 / close) * 100
+        lines.append(
+            f"<b>ATR 14:</b> {cur}{status.atr14:.2f}  ({atr_pct:.2f}% of price)"
+        )
+
+    if status.high_52w is not None and status.low_52w is not None and close:
+        from_high = ((close - status.high_52w) / status.high_52w) * 100
+        from_low = ((close - status.low_52w) / status.low_52w) * 100
+        lines.append(
+            f"<b>52w range:</b> {cur}{status.low_52w:.2f} – {cur}{status.high_52w:.2f}"
+        )
+        lines.append(
+            f"  {from_high:+.1f}% from high · {from_low:+.1f}% from low"
+        )
+
+    if status.last_volume is not None and status.avg_volume_20:
+        rel = status.last_volume / status.avg_volume_20
+        lines.append(
+            f"<b>Volume:</b> {status.last_volume:,.0f}  "
+            f"({rel:.2f}× 20d avg)"
+        )
 
     return "\n".join(lines)
 
