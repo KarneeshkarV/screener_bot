@@ -49,7 +49,9 @@ def render_price_chart(
     has_volume = bool("Volume" in df.columns and df["Volume"].notna().any())
     close = df["Close"]
     addplots = [
-        mpf.make_addplot(close.ewm(span=span, adjust=False).mean(), color=color, width=1.0)
+        mpf.make_addplot(
+            close.ewm(span=span, adjust=False).mean(), color=color, width=1.0
+        )
         for span, color in _EMA_SPANS
         if len(close) >= span
     ]
@@ -67,6 +69,8 @@ def render_price_chart(
 
     buf = BytesIO()
     with _PLOT_LOCK:
-        mpf.plot(df, savefig=dict(fname=buf, dpi=120, bbox_inches="tight"), **plot_kwargs)
+        mpf.plot(
+            df, savefig=dict(fname=buf, dpi=120, bbox_inches="tight"), **plot_kwargs
+        )
     buf.seek(0)
     return buf.getvalue()

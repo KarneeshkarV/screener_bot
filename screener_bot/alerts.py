@@ -65,7 +65,9 @@ class AlertService:
         if not sections:
             return None
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        return "\n".join([f"<b>🔔 Alerts</b> <i>{escape(timestamp)}</i>", "", *sections])
+        return "\n".join(
+            [f"<b>🔔 Alerts</b> <i>{escape(timestamp)}</i>", "", *sections]
+        )
 
     def _compute_flags(self, status: TechnicalStatus) -> dict:
         alerts = self.config.alerts
@@ -83,7 +85,8 @@ class AlertService:
         vol_spike = bool(
             status.last_volume is not None
             and status.avg_volume_20
-            and status.last_volume >= status.avg_volume_20 * alerts.volume_spike_multiple
+            and status.last_volume
+            >= status.avg_volume_20 * alerts.volume_spike_multiple
         )
         return {
             "entry": status.entry.matched,
@@ -102,13 +105,17 @@ class AlertService:
             and old.get("exit") is not None
             and cur["exit"] != old.get("exit")
         ):
-            lines.append("⚠️ Exit signal triggered" if cur["exit"] else "Exit signal cleared")
+            lines.append(
+                "⚠️ Exit signal triggered" if cur["exit"] else "Exit signal cleared"
+            )
         if (
             cur["entry"] is not None
             and old.get("entry") is not None
             and cur["entry"] != old.get("entry")
         ):
-            lines.append("🟢 Entry signal triggered" if cur["entry"] else "Entry signal cleared")
+            lines.append(
+                "🟢 Entry signal triggered" if cur["entry"] else "Entry signal cleared"
+            )
 
         cur_symbol = self._currency(status)
         if cur["at_high"] and not old.get("at_high"):
@@ -127,7 +134,7 @@ class AlertService:
             lines.append(f"🔻 New 52-week low ({cur_symbol}{low:.2f})")
 
         if cur["vol_spike"] and not old.get("vol_spike"):
-            rel = status.last_volume / status.avg_volume_20  # type: ignore[operator]
+            rel = status.last_volume / status.avg_volume_20
             lines.append(f"🔊 Volume spike: {rel:.1f}× 20d avg")
 
         return lines

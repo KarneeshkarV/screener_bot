@@ -60,7 +60,9 @@ def test_no_change_produces_no_report(tmp_path) -> None:
     path = tmp_path / "state.json"
     status = _status(close=100.0, exit_matched=False)
     AlertService(_config(), _StubTechnical([status]), state_path=path).evaluate()
-    report = AlertService(_config(), _StubTechnical([status]), state_path=path).evaluate()
+    report = AlertService(
+        _config(), _StubTechnical([status]), state_path=path
+    ).evaluate()
     assert report is None
 
 
@@ -132,7 +134,9 @@ def test_data_gap_does_not_clear_baseline(tmp_path) -> None:
 
 
 def test_chat_ids_default_to_allowed(tmp_path) -> None:
-    service = AlertService(_config(), _StubTechnical([]), state_path=tmp_path / "s.json")
+    service = AlertService(
+        _config(), _StubTechnical([]), state_path=tmp_path / "s.json"
+    )
     assert service.chat_ids() == [1]
 
 
@@ -142,3 +146,81 @@ def test_alerts_config_defaults() -> None:
     assert config.alerts.interval_minutes == 60
     assert config.alerts.near_high_pct == 15.0
     assert config.alerts.volume_spike_multiple == 2.0
+
+
+def test_entry_signal_flip_is_reported(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False, entry_matched=False)]),
+        state_path=path,
+    ).evaluate()
+
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False, entry_matched=True)]),
+        state_path=path,
+    ).evaluate()
+
+    assert report is not None
+    assert "Entry signal triggered" in report
+
+
+def test_new_52_week_low(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False, low=50.0)]),
+        state_path=path,
+    ).evaluate()
+
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=49.0, exit_matched=False, low=49.0)]),
+        state_path=path,
+    ).evaluate()
+
+    assert report is not None
+    assert "New 52-week low" in report
+
+
+def test_chat_ids_prefer_alerts_config(tmp_path) -> None:
+    config = _config(chat_ids=[99])
+    service = AlertService(config, _StubTechnical([]), state_path=tmp_path / "s.json")
+    assert service.chat_ids() == [99]
+
+
+def test_load_state_ignores_non_dict_payload(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text("[1, 2, 3]")
+    service = AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False)]),
+        state_path=path,
+    )
+    # A non-dict state file is treated as empty, so this run is a silent baseline.
+    assert service.evaluate() is None
+
+
+def test_load_state_filters_malformed_entries(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text('{"AAPL": {"entry": true}, "BAD": 5}')
+    service = AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False)]),
+        state_path=path,
+    )
+    # "BAD" has a non-dict value and is dropped; the run completes without error.
+    assert service.evaluate() is None
+
+
+def test_save_state_oserror_is_swallowed(tmp_path) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    path = blocker / "state.json"  # parent is a file -> mkdir/open raise OSError
+    service = AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False)]),
+        state_path=path,
+    )
+    assert service.evaluate() is None  # persistence failure must not raise

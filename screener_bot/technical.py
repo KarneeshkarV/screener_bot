@@ -142,7 +142,9 @@ class TechnicalService:
             for expr in self.config.technical_snapshot.expressions:
                 try:
                     status.snapshot.append(
-                        ExpressionResult(expr.label, _eval_expression(expr.expression, bars))
+                        ExpressionResult(
+                            expr.label, _eval_expression(expr.expression, bars)
+                        )
                     )
                 except Exception as exc:
                     status.snapshot.append(ExpressionResult(expr.label, None, str(exc)))
@@ -157,8 +159,12 @@ class TechnicalService:
 
             ruleset = self.config.rulesets.get(item.ruleset)
             if ruleset is None:
-                status.entry = RuleStatus(None, error=f"Unknown ruleset {item.ruleset!r}")
-                status.exit = RuleStatus(None, error=f"Unknown ruleset {item.ruleset!r}")
+                status.entry = RuleStatus(
+                    None, error=f"Unknown ruleset {item.ruleset!r}"
+                )
+                status.exit = RuleStatus(
+                    None, error=f"Unknown ruleset {item.ruleset!r}"
+                )
             else:
                 status.entry = _eval_group(ruleset.entry, bars)
                 status.exit = _eval_group(ruleset.exit, bars)

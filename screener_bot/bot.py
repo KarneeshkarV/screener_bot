@@ -111,7 +111,9 @@ def build_application(
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.message:
-            await update.message.reply_text("Screener bot is ready. Use /check_portfolio.")
+            await update.message.reply_text(
+                "Screener bot is ready. Use /check_portfolio."
+            )
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.message:
@@ -149,9 +151,7 @@ def build_application(
                 message,
                 parse_mode=ParseMode.HTML,
                 reply_markup=(
-                    _holdings_keyboard(config)
-                    if index == len(messages) - 1
-                    else None
+                    _holdings_keyboard(config) if index == len(messages) - 1 else None
                 ),
             )
 
@@ -163,10 +163,7 @@ def build_application(
         except Exception:
             logging.exception("scheduled portfolio check failed")
             return
-        targets = (
-            config.scheduled_screener.chat_ids
-            or config.telegram.allowed_chat_ids
-        )
+        targets = config.scheduled_screener.chat_ids or config.telegram.allowed_chat_ids
         for chat_id in targets:
             messages = split_messages(report)
             for index, message in enumerate(messages):
@@ -222,7 +219,9 @@ def build_application(
                 logging.exception("scheduled screener full manual run failed")
                 await update.message.reply_text("Screener run failed. See logs.")
 
-    async def check_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def check_portfolio(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if await _guard(config, update):
             await _run_portfolio_check(update)
 
@@ -274,7 +273,9 @@ def build_application(
         await update.message.reply_text(f"Fetching {symbol}...")
         await _send_detail(update.message, symbol, market)
 
-    async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def alerts_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if not (await _guard(config, update) and update.message):
             return
         await update.message.reply_text("Checking for alerts...")
