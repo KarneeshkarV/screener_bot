@@ -10,6 +10,7 @@ from screener.backtester.data import build_price_fetcher, tv_to_yf
 from screener.backtester.pine import evaluate, parse
 
 from .config import BotConfig, PortfolioItem, RuleGroup
+from .pricecache import CachedPriceFetcher
 
 
 @dataclass
@@ -56,6 +57,10 @@ class TechnicalStatus:
     snapshot: list[ExpressionResult] = field(default_factory=list)
     entry: RuleStatus = field(default_factory=lambda: RuleStatus(None))
     exit: RuleStatus = field(default_factory=lambda: RuleStatus(None))
+    high_52w: float | None = None
+    low_52w: float | None = None
+    last_volume: float | None = None
+    avg_volume_20: float | None = None
     error: str | None = None
 
 
@@ -71,6 +76,19 @@ def _last_value(series: pd.Series) -> Any:
 
 def _eval_expression(expression: str, bars: pd.DataFrame) -> Any:
     return _last_value(evaluate(parse(expression), bars))
+
+
+def _safe_eval(expression: str, bars: pd.DataFrame) -> float | None:
+    try:
+        value = _eval_expression(expression, bars)
+    except Exception:  # individual indicator failure is non-fatal
+        return None
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _eval_group(group: RuleGroup, bars: pd.DataFrame) -> RuleStatus:
@@ -97,7 +115,7 @@ def _eval_group(group: RuleGroup, bars: pd.DataFrame) -> RuleStatus:
 class TechnicalService:
     def __init__(self, config: BotConfig, price_fetcher=None) -> None:
         self.config = config
-        self.price_fetcher = price_fetcher or build_price_fetcher()
+        self.price_fetcher = price_fetcher or CachedPriceFetcher(build_price_fetcher())
 
     def check_portfolio(self) -> list[TechnicalStatus]:
         end = date.today() + timedelta(days=1)
@@ -128,6 +146,14 @@ class TechnicalService:
                     )
                 except Exception as exc:
                     status.snapshot.append(ExpressionResult(expr.label, None, str(exc)))
+
+            status.high_52w = _safe_eval("highest(high, 252)", bars)
+            status.low_52w = _safe_eval("lowest(low, 252)", bars)
+            status.avg_volume_20 = _safe_eval("sma(volume, 20)", bars)
+            if "volume" in bars:
+                volume = bars["volume"].dropna()
+                if not volume.empty:
+                    status.last_volume = float(volume.iloc[-1])
 
             ruleset = self.config.rulesets.get(item.ruleset)
             if ruleset is None:
@@ -209,3 +235,24 @@ class TechnicalService:
             except Exception:  # individual indicator failure is non-fatal
                 continue
         return status
+
+    def bars(
+        self, symbol: str, market: str | None = None
+    ) -> tuple[str | None, str | None, pd.DataFrame | None]:
+        """Best-effort fetch of sorted OHLCV bars for charting.
+
+        Returns ``(market, ticker, bars)`` or ``(None, None, None)`` when no
+        data is available. Shares the price cache with ``detail``.
+        """
+        end = date.today() + timedelta(days=1)
+        start = end - timedelta(days=370)
+        for candidate in self._candidate_markets(symbol, market):
+            ticker = tv_to_yf(symbol, candidate)
+            try:
+                frames = self.price_fetcher.fetch([ticker], start, end)
+            except Exception:  # network/data failures shouldn't crash the bot
+                continue
+            candidate_bars = frames.get(ticker)
+            if candidate_bars is not None and not candidate_bars.empty:
+                return candidate, ticker, candidate_bars.sort_index()
+        return None, None, None

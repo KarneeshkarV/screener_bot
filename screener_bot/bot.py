@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import time
 from zoneinfo import ZoneInfo
@@ -18,6 +19,8 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from .alerts import AlertService
+from .charts import render_price_chart
 from .config import BotConfig, EnvSettings
 from .formatting import (
     format_detail_report,
@@ -36,7 +39,8 @@ HELP_TEXT = (
     "/run_all - run all screeners and show the current lists\n"
     "/run_all india ema - run one screener and show all returned rows\n"
     "/check_portfolio - check every configured holding\n"
-    "/stock SYMBOL - detailed technicals for any symbol\n"
+    "/stock SYMBOL - detailed technicals + chart for any symbol\n"
+    "/alerts - check holdings for changes now\n"
     "/status - show bot status\n"
     "/help - show this help"
 )
@@ -50,7 +54,8 @@ BOT_COMMANDS = [
     BotCommand("run", "Run screener changes now"),
     BotCommand("run_all", "Run all screeners and show current lists"),
     BotCommand("check_portfolio", "Check every configured holding"),
-    BotCommand("stock", "Detailed technicals for any symbol"),
+    BotCommand("stock", "Detailed technicals + chart for any symbol"),
+    BotCommand("alerts", "Check holdings for changes now"),
 ]
 
 
@@ -92,6 +97,7 @@ def build_application(
     technical_service: TechnicalService | None = None,
     ownership_service: OwnershipService | None = None,
     screener_service: ScheduledScreenerService | None = None,
+    alert_service: AlertService | None = None,
 ) -> Application:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
@@ -99,6 +105,8 @@ def build_application(
     technical_service = technical_service or TechnicalService(config)
     ownership_service = ownership_service or OwnershipService()
     screener_service = screener_service or ScheduledScreenerService(config)
+    # Share the technical service (and its price cache) with the alert engine.
+    alert_service = alert_service or AlertService(config, technical_service)
     app = Application.builder().token(settings.telegram_bot_token).build()
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -116,7 +124,8 @@ def build_application(
                 f"Timezone: {config.timezone}\n"
                 f"Scheduled screener: {_scheduled_status(config)}\n"
                 f"Scheduled portfolio check: daily at "
-                f"{PORTFOLIO_CHECK_TIME} {config.timezone}"
+                f"{PORTFOLIO_CHECK_TIME} {config.timezone}\n"
+                f"Alerts: {_alerts_status(config)}"
             )
 
     def _portfolio_report() -> str:
@@ -129,7 +138,7 @@ def build_application(
             return
         await update.message.reply_text("Checking portfolio...")
         try:
-            report = _portfolio_report()
+            report = await asyncio.to_thread(_portfolio_report)
         except Exception:
             logging.exception("portfolio check failed")
             await update.message.reply_text("Portfolio check failed. See logs.")
@@ -150,7 +159,7 @@ def build_application(
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         try:
-            report = _portfolio_report()
+            report = await asyncio.to_thread(_portfolio_report)
         except Exception:
             logging.exception("scheduled portfolio check failed")
             return
@@ -221,6 +230,34 @@ def build_application(
         status = technical_service.detail(symbol, market)
         return format_detail_report(status)
 
+    def _chart_png(symbol: str, market: str | None) -> bytes | None:
+        _, _, bars = technical_service.bars(symbol, market)
+        if bars is None:
+            return None
+        return render_price_chart(bars, symbol)
+
+    async def _build_chart(symbol: str, market: str | None) -> bytes | None:
+        try:
+            return await asyncio.to_thread(_chart_png, symbol, market)
+        except Exception:  # a chart failure should never block the text report
+            logging.exception("chart render failed for %s", symbol)
+            return None
+
+    async def _send_detail(message, symbol: str, market: str | None) -> None:
+        try:
+            report = await asyncio.to_thread(_detail_report, symbol, market)
+        except Exception:
+            logging.exception("stock detail failed for %s", symbol)
+            await message.reply_text("Stock lookup failed. See logs.")
+            return
+        chart = await _build_chart(symbol, market)
+        if chart is not None:
+            try:
+                await message.reply_photo(photo=chart)
+            except Exception:
+                logging.exception("sending chart failed for %s", symbol)
+        await message.reply_text(report, parse_mode=ParseMode.HTML)
+
     async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not (await _guard(config, update) and update.message):
             return
@@ -235,13 +272,39 @@ def build_application(
         if len(context.args) > 1 and context.args[1].lower() in {"us", "india"}:
             market = context.args[1].lower()
         await update.message.reply_text(f"Fetching {symbol}...")
-        try:
-            report = _detail_report(symbol, market)
-        except Exception:
-            logging.exception("stock detail failed for %s", symbol)
-            await update.message.reply_text("Stock lookup failed. See logs.")
+        await _send_detail(update.message, symbol, market)
+
+    async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not (await _guard(config, update) and update.message):
             return
-        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
+        await update.message.reply_text("Checking for alerts...")
+        try:
+            report = await asyncio.to_thread(alert_service.evaluate)
+        except Exception:
+            logging.exception("manual alert check failed")
+            await update.message.reply_text("Alert check failed. See logs.")
+            return
+        if not report:
+            await update.message.reply_text("No changes since last check.")
+            return
+        for message in split_messages(report):
+            await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+    async def _alert_check(context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            report = await asyncio.to_thread(alert_service.evaluate)
+        except Exception:
+            logging.exception("scheduled alert check failed")
+            return
+        if not report:
+            return
+        for chat_id in alert_service.chat_ids():
+            for message in split_messages(report):
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode=ParseMode.HTML,
+                )
 
     async def detail_callback(
         update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -257,13 +320,8 @@ def build_application(
         if len(parts) != 3 or parts[0] != CALLBACK_DETAIL:
             return
         _, market, symbol = parts
-        try:
-            report = _detail_report(symbol, market or None)
-        except Exception:
-            logging.exception("detail callback failed for %s", symbol)
-            report = "Stock lookup failed. See logs."
         if query.message:
-            await query.message.reply_text(report, parse_mode=ParseMode.HTML)
+            await _send_detail(query.message, symbol, market or None)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -272,10 +330,13 @@ def build_application(
     app.add_handler(CommandHandler("run_all", run_all))
     app.add_handler(CommandHandler("check_portfolio", check_portfolio))
     app.add_handler(CommandHandler("stock", stock))
+    app.add_handler(CommandHandler("alerts", alerts_command))
     app.add_handler(
         CallbackQueryHandler(detail_callback, pattern=f"^{CALLBACK_DETAIL}\\|")
     )
-    app.post_init = _post_init(config, screener_service, _scheduled_portfolio_check)
+    app.post_init = _post_init(
+        config, screener_service, _scheduled_portfolio_check, _alert_check
+    )
     return app
 
 
@@ -287,11 +348,13 @@ def _post_init(
     config: BotConfig,
     screener_service: ScheduledScreenerService,
     portfolio_callback,
+    alert_callback,
 ):
     async def post_init(app: Application) -> None:
         await _register_commands(app)
         _schedule_screener_jobs(app, config, screener_service)
         _schedule_portfolio_jobs(app, config, portfolio_callback)
+        _schedule_alert_jobs(app, config, alert_callback)
 
     return post_init
 
@@ -313,6 +376,21 @@ def _schedule_portfolio_jobs(app: Application, config: BotConfig, callback) -> N
         callback,
         time=run_time,
         name="scheduled-portfolio-check",
+    )
+
+
+def _schedule_alert_jobs(app: Application, config: BotConfig, callback) -> None:
+    if not config.alerts.enabled:
+        return
+    if app.job_queue is None:
+        logging.warning("alerts disabled: application has no job queue")
+        return
+    interval = config.alerts.interval_minutes * 60
+    app.job_queue.run_repeating(
+        callback,
+        interval=interval,
+        first=60,
+        name="portfolio-alerts",
     )
 
 
@@ -358,3 +436,10 @@ def _scheduled_status(config: BotConfig) -> str:
     if not scheduled.times:
         return "enabled, no times configured"
     return "enabled at " + ", ".join(scheduled.times)
+
+
+def _alerts_status(config: BotConfig) -> str:
+    alerts = config.alerts
+    if not alerts.enabled:
+        return "disabled"
+    return f"enabled, every {alerts.interval_minutes}m"

@@ -103,6 +103,35 @@ class ScheduledScreenerConfig(BaseModel):
         return value
 
 
+class AlertsConfig(BaseModel):
+    enabled: bool = True
+    interval_minutes: int = 60
+    near_high_pct: float = 15.0
+    volume_spike_multiple: float = 2.0
+    chat_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("interval_minutes")
+    @classmethod
+    def positive_interval(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("must be positive")
+        return value
+
+    @field_validator("near_high_pct")
+    @classmethod
+    def valid_near_high_pct(cls, value: float) -> float:
+        if not 0 < value < 100:
+            raise ValueError("must be between 0 and 100")
+        return value
+
+    @field_validator("volume_spike_multiple")
+    @classmethod
+    def positive_multiple(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("must be positive")
+        return value
+
+
 class BotConfig(BaseModel):
     timezone: str = "Asia/Kolkata"
     telegram: TelegramConfig
@@ -114,6 +143,7 @@ class BotConfig(BaseModel):
     scheduled_screener: ScheduledScreenerConfig = Field(
         default_factory=ScheduledScreenerConfig
     )
+    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
 
     @field_validator("portfolio")
     @classmethod

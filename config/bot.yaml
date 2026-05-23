@@ -25,6 +25,13 @@ scheduled_screener:
     - label: US Insider Holding Change
       command: ["uv", "run", "screener", "promoter-buys", "-m", "us", "-n", "30", "--csv"]
 
+alerts:
+  enabled: true
+  interval_minutes: 60        # hourly change checks
+  near_high_pct: 15           # alert when within 15% of the 52-week high
+  volume_spike_multiple: 2.0  # alert when volume >= 2x the 20-day average
+  # chat_ids: []              # defaults to telegram.allowed_chat_ids
+
 portfolio:
   # US holdings
   - symbol: AAPL
