@@ -94,7 +94,9 @@ class ScheduledScreenerService:
         except Exception as exc:
             return CommandResult(command, None, "", str(exc))
 
-    def _format_report(self, results: list[CommandResult], show_all: bool = False) -> str:
+    def _format_report(
+        self, results: list[CommandResult], show_all: bool = False
+    ) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         lines = [f"<b>Screener Job</b> <i>{escape(timestamp)}</i>"]
         for result in results:
@@ -106,7 +108,9 @@ class ScheduledScreenerService:
             output = result.stdout.strip()
             error = result.stderr.strip()
             if output:
-                lines.extend(_format_output(result.config.label, output, show_all=show_all))
+                lines.extend(
+                    _format_output(result.config.label, output, show_all=show_all)
+                )
             if error:
                 filtered_error = _filter_stderr(error, success=result.returncode == 0)
                 if filtered_error:
@@ -155,9 +159,13 @@ class ScheduledScreenerService:
                 changed = True
             else:
                 if output:
-                    lines.extend(_format_output(result.config.label, output, show_all=False))
+                    lines.extend(
+                        _format_output(result.config.label, output, show_all=False)
+                    )
                 if error:
-                    filtered_error = _filter_stderr(error, success=result.returncode == 0)
+                    filtered_error = _filter_stderr(
+                        error, success=result.returncode == 0
+                    )
                     if filtered_error:
                         lines.append(
                             f"<i>stderr:</i>\n<pre>{escape(_truncate(filtered_error))}</pre>"
@@ -223,7 +231,11 @@ def _format_output(label: str, output: str, show_all: bool = False) -> list[str]
     limit = len(rows) if show_all else None
     if "ema" in label.lower():
         return _format_ema_rows(rows, limit=limit or 12)
-    if "holding" in label.lower() or "insider" in label.lower() or "promoter" in label.lower():
+    if (
+        "holding" in label.lower()
+        or "insider" in label.lower()
+        or "promoter" in label.lower()
+    ):
         return _format_holding_rows(rows, limit=limit or 10)
     return _format_generic_rows(rows, limit=limit or 10)
 
@@ -254,7 +266,7 @@ def _parse_csv_rows(output: str) -> list[dict[str, str]]:
             return []
         reader = csv.DictReader(StringIO(csv_text))
         if not reader.fieldnames or len(reader.fieldnames) < 2:
-            return []
+            return []  # pragma: no cover - _extract_csv_text guarantees a comma
         return [{key: value for key, value in row.items()} for row in reader]
     except csv.Error:
         return []
@@ -404,9 +416,7 @@ _NOISE_MARKERS = (
 def _filter_stderr(error: str, success: bool) -> str:
     lines = [line for line in error.splitlines() if line.strip()]
     # uv/runtime progress chatter is never useful in a Telegram report.
-    lines = [
-        line for line in lines if not any(m in line for m in _NOISE_MARKERS)
-    ]
+    lines = [line for line in lines if not any(m in line for m in _NOISE_MARKERS)]
     if success:
         lines = [
             line
@@ -423,8 +433,7 @@ def _filter_stderr(error: str, success: bool) -> str:
     if network_failures:
         kept = [line for line in lines if line not in network_failures]
         kept.append(
-            f"⚠️ {len(network_failures)} network failures "
-            f"(data source unreachable)"
+            f"⚠️ {len(network_failures)} network failures (data source unreachable)"
         )
         lines = kept
     return "\n".join(lines)

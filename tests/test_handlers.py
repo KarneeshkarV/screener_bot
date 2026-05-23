@@ -205,7 +205,11 @@ def test_specific_screener_query_shows_all_rows() -> None:
                 "commands": [
                     {
                         "label": "India EMA",
-                        "command": [sys.executable, "-c", "print('\\n'.join(%r))" % rows],
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            "print('\\n'.join(%r))" % rows,
+                        ],
                     },
                     {
                         "label": "US EMA",

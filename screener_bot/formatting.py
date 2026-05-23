@@ -102,7 +102,11 @@ def format_portfolio_report(
         owner = ownership.get(item.symbol)
         if owner is not None:
             if owner.market == "india":
-                quarter = f" <i>{escape(owner.latest_quarter)}</i>" if owner.latest_quarter else ""
+                quarter = (
+                    f" <i>{escape(owner.latest_quarter)}</i>"
+                    if owner.latest_quarter
+                    else ""
+                )
                 lines.append(f"  <b>Shareholding{quarter}:</b>")
                 lines.append(
                     f"    Promoter <b>{_fmt_number(owner.promoter_pct_latest)}%</b> ({_fmt_delta(owner.promoter_change)})"
@@ -192,16 +196,11 @@ def format_detail_report(status: DetailStatus) -> str:
         lines.append(
             f"<b>52w range:</b> {cur}{status.low_52w:.2f} – {cur}{status.high_52w:.2f}"
         )
-        lines.append(
-            f"  {from_high:+.1f}% from high · {from_low:+.1f}% from low"
-        )
+        lines.append(f"  {from_high:+.1f}% from high · {from_low:+.1f}% from low")
 
     if status.last_volume is not None and status.avg_volume_20:
         rel = status.last_volume / status.avg_volume_20
-        lines.append(
-            f"<b>Volume:</b> {status.last_volume:,.0f}  "
-            f"({rel:.2f}× 20d avg)"
-        )
+        lines.append(f"<b>Volume:</b> {status.last_volume:,.0f}  ({rel:.2f}× 20d avg)")
 
     return "\n".join(lines)
 

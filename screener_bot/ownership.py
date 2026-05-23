@@ -59,7 +59,9 @@ def fetch_india_shareholding(symbol: str) -> OwnershipStatus:
                 time.sleep(0.5 * (attempt + 1))
 
     if rows is None:
-        status.error = str(last_error) if last_error else "No shareholding data available"
+        status.error = (
+            str(last_error) if last_error else "No shareholding data available"
+        )
         return status
 
     if not rows or len(rows) < 2:
@@ -101,9 +103,11 @@ class OwnershipService:
                 insiders = fetch_yfinance_insiders(universe, "us")
             except Exception:
                 insiders = pd.DataFrame()
-            by_name = {
-                str(row.get("name")): row for _, row in insiders.iterrows()
-            } if not insiders.empty else {}
+            by_name = (
+                {str(row.get("name")): row for _, row in insiders.iterrows()}
+                if not insiders.empty
+                else {}
+            )
             for item in us_items:
                 row = by_name.get(item.symbol)
                 status = OwnershipStatus(symbol=item.symbol, market="us")
