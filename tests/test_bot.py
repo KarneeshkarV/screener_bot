@@ -47,7 +47,9 @@ def _config(**overrides) -> BotConfig:
 
 
 class StubTechnical:
-    def __init__(self, *, statuses=None, detail=None, bars=(None, None, None), raises=False):
+    def __init__(
+        self, *, statuses=None, detail=None, bars=(None, None, None), raises=False
+    ):
         self._statuses = statuses or []
         self._detail = detail
         self._bars = bars
@@ -130,7 +132,9 @@ def make_update(*, chat_id=1, message=True, callback_data=None):
     msg = FakeMessage() if message else None
     cq = None
     if callback_data is not None:
-        cq = SimpleNamespace(answer=AsyncMock(), data=callback_data, message=FakeMessage())
+        cq = SimpleNamespace(
+            answer=AsyncMock(), data=callback_data, message=FakeMessage()
+        )
     return SimpleNamespace(
         effective_chat=SimpleNamespace(id=chat_id), message=msg, callback_query=cq
     )
@@ -173,11 +177,15 @@ class FakeJobQueue:
         self.repeating: list = []
 
     def run_daily(self, callback, *, time, name, data=None):
-        self.daily.append(SimpleNamespace(callback=callback, time=time, name=name, data=data))
+        self.daily.append(
+            SimpleNamespace(callback=callback, time=time, name=name, data=data)
+        )
 
     def run_repeating(self, callback, *, interval, first, name):
         self.repeating.append(
-            SimpleNamespace(callback=callback, interval=interval, first=first, name=name)
+            SimpleNamespace(
+                callback=callback, interval=interval, first=first, name=name
+            )
         )
 
 
@@ -204,7 +212,9 @@ def test_guard_passes_when_authorized() -> None:
 
 def test_holdings_keyboard_groups_into_rows_of_three() -> None:
     config = _config(
-        portfolio=[{"symbol": f"S{i}", "market": "us", "ruleset": "x"} for i in range(5)]
+        portfolio=[
+            {"symbol": f"S{i}", "market": "us", "ruleset": "x"} for i in range(5)
+        ]
     )
     rows = _holdings_keyboard(config).inline_keyboard
     assert len(rows) == 2
@@ -220,7 +230,9 @@ def test_build_application_requires_token() -> None:
 def test_build_application_constructs_default_services(monkeypatch) -> None:
     monkeypatch.setattr(botmod, "TechnicalService", lambda config: StubTechnical())
     monkeypatch.setattr(botmod, "OwnershipService", lambda: StubOwnership())
-    monkeypatch.setattr(botmod, "ScheduledScreenerService", lambda config: StubScreener())
+    monkeypatch.setattr(
+        botmod, "ScheduledScreenerService", lambda config: StubScreener()
+    )
     monkeypatch.setattr(botmod, "AlertService", lambda config, technical: StubAlert())
     app = build_application(_settings(), _config())
     assert handler(app, "start") is not None
@@ -383,7 +395,13 @@ def _chart_bars():
     idx = pd.date_range("2025-01-01", periods=30)
     close = pd.Series([1.5] * 30, index=idx, dtype=float)
     return pd.DataFrame(
-        {"open": close, "high": close + 1, "low": close - 1, "close": close, "volume": 100.0},
+        {
+            "open": close,
+            "high": close + 1,
+            "low": close - 1,
+            "close": close,
+            "volume": 100.0,
+        },
         index=idx,
     )
 
@@ -559,7 +577,9 @@ def test_register_commands() -> None:
 
 
 def test_scheduled_status_variants() -> None:
-    assert _scheduled_status(_config(scheduled_screener={"enabled": False})) == "disabled"
+    assert (
+        _scheduled_status(_config(scheduled_screener={"enabled": False})) == "disabled"
+    )
     assert (
         _scheduled_status(_config(scheduled_screener={"enabled": True}))
         == "enabled, no times configured"
@@ -647,7 +667,9 @@ def test_post_init_schedules_and_invokes_callbacks(monkeypatch, tmp_path) -> Non
     assert [job.name for job in fake_jq.repeating] == ["portfolio-alerts"]
 
     # scheduled screener callback
-    screener_job = next(j for j in fake_jq.daily if j.name == "scheduled-screener-16:00")
+    screener_job = next(
+        j for j in fake_jq.daily if j.name == "scheduled-screener-16:00"
+    )
     sctx = SimpleNamespace(
         bot=SimpleNamespace(send_message=AsyncMock()),
         job=SimpleNamespace(data=screener_job.data),
@@ -656,7 +678,9 @@ def test_post_init_schedules_and_invokes_callbacks(monkeypatch, tmp_path) -> Non
     sctx.bot.send_message.assert_awaited()
 
     # scheduled portfolio check
-    portfolio_job = next(j for j in fake_jq.daily if j.name == "scheduled-portfolio-check")
+    portfolio_job = next(
+        j for j in fake_jq.daily if j.name == "scheduled-portfolio-check"
+    )
     pctx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
     run(portfolio_job.callback(pctx))
     pctx.bot.send_message.assert_awaited()
@@ -682,7 +706,9 @@ def test_scheduled_portfolio_check_handles_failure(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(botmod, "_register_commands", AsyncMock())
     run(app.post_init(app))
 
-    portfolio_job = next(j for j in fake_jq.daily if j.name == "scheduled-portfolio-check")
+    portfolio_job = next(
+        j for j in fake_jq.daily if j.name == "scheduled-portfolio-check"
+    )
     pctx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
     run(portfolio_job.callback(pctx))  # swallows failure
     pctx.bot.send_message.assert_not_awaited()

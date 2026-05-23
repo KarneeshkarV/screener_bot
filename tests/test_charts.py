@@ -42,7 +42,12 @@ def test_missing_ohlc_columns_returns_none() -> None:
 def test_all_nan_rows_drop_to_empty_returns_none() -> None:
     idx = pd.date_range("2025-01-01", periods=3)
     df = pd.DataFrame(
-        {"open": [None] * 3, "high": [None] * 3, "low": [None] * 3, "close": [None] * 3},
+        {
+            "open": [None] * 3,
+            "high": [None] * 3,
+            "low": [None] * 3,
+            "close": [None] * 3,
+        },
         index=idx,
     )
     assert render_price_chart(df, "X") is None

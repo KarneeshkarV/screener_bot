@@ -193,7 +193,9 @@ def test_format_output_raw_dump_for_non_csv() -> None:
 
 
 def test_format_output_ema_table() -> None:
-    out = _format_output("India EMA", "name,close,change,setup_score\nAAA,915.05,0.87,80.39")
+    out = _format_output(
+        "India EMA", "name,close,change,setup_score\nAAA,915.05,0.87,80.39"
+    )
     assert out[0].startswith("<pre>Symbol")
     assert any("AAA" in line for line in out)
     assert any("+0.87%" in line for line in out)
@@ -254,7 +256,9 @@ def test_run_command_timeout() -> None:
 
 
 def test_run_command_subprocess_error() -> None:
-    config = _cfg(commands=[{"label": "Bad", "command": ["definitely_not_a_real_binary_xyz"]}])
+    config = _cfg(
+        commands=[{"label": "Bad", "command": ["definitely_not_a_real_binary_xyz"]}]
+    )
     report = run(ScheduledScreenerService(config).run(full_list=True))
     assert "<b>Bad</b>" in report
 
@@ -280,7 +284,10 @@ def test_run_command_missing_working_directory(tmp_path) -> None:
 def test_delta_report_non_csv_falls_back_to_output(tmp_path) -> None:
     config = _cfg(
         commands=[
-            {"label": "Weird", "command": _py("print('hello world one\\nsecond line here')")}
+            {
+                "label": "Weird",
+                "command": _py("print('hello world one\\nsecond line here')"),
+            }
         ]
     )
     report = run(ScheduledScreenerService(config, tmp_path / "s.json").run())
@@ -293,7 +300,9 @@ def test_delta_report_error_branch(tmp_path) -> None:
         commands=[
             {
                 "label": "Err",
-                "command": _py("import sys; sys.stderr.write('boom error'); sys.exit(2)"),
+                "command": _py(
+                    "import sys; sys.stderr.write('boom error'); sys.exit(2)"
+                ),
             }
         ]
     )
@@ -303,7 +312,9 @@ def test_delta_report_error_branch(tmp_path) -> None:
 
 
 def test_delta_report_no_output_branch(tmp_path) -> None:
-    config = _cfg(commands=[{"label": "Empty", "command": _py("import sys; sys.exit(3)")}])
+    config = _cfg(
+        commands=[{"label": "Empty", "command": _py("import sys; sys.exit(3)")}]
+    )
     report = run(ScheduledScreenerService(config, tmp_path / "s.json").run())
     assert "No output." in report
 
@@ -315,7 +326,9 @@ def test_load_snapshots_ignores_non_dict(tmp_path) -> None:
         commands=[
             {
                 "label": "India EMA",
-                "command": _py("print('name,close,change,setup_score');print('AAA,1,1,1')"),
+                "command": _py(
+                    "print('name,close,change,setup_score');print('AAA,1,1,1')"
+                ),
             }
         ]
     )
@@ -331,7 +344,9 @@ def test_save_snapshots_oserror_is_swallowed(tmp_path) -> None:
         commands=[
             {
                 "label": "India EMA",
-                "command": _py("print('name,close,change,setup_score');print('AAA,1,1,1')"),
+                "command": _py(
+                    "print('name,close,change,setup_score');print('AAA,1,1,1')"
+                ),
             }
         ]
     )
@@ -347,7 +362,9 @@ def test_send_screener_report_uses_service_chat_ids(tmp_path) -> None:
         commands=[
             {
                 "label": "India EMA",
-                "command": _py("print('name,close,change,setup_score');print('AAA,1,1,1')"),
+                "command": _py(
+                    "print('name,close,change,setup_score');print('AAA,1,1,1')"
+                ),
             }
         ],
         chat_ids=[5, 6],
