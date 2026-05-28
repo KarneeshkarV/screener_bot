@@ -2245,7 +2245,7 @@ wheels = [
 [[package]]
 name = "screener"
 version = "0.1.0"
-source = { git = "https://github.com/KarneeshkarV/screener.git#33263ec41ffabc27f264f655fea2c0bedd9f8be2" }
+source = { git = "https://github.com/KarneeshkarV/screener.git#90a9ef82695b07dc94205566e1e242970e962d00" }
 dependencies = [
     { name = "click" },
     { name = "jugaad-data" },
@@ -2269,6 +2269,7 @@ name = "screener-bot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "libsql-client" },
     { name = "mplfinance" },
     { name = "pandas" },
     { name = "pydantic" },
@@ -2291,6 +2292,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "libsql-client", specifier = ">=0.3" },
     { name = "mplfinance", specifier = ">=0.12.10b0" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pydantic", specifier = ">=2.0" },

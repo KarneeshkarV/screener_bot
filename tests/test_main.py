@@ -7,15 +7,16 @@ from unittest.mock import MagicMock
 def test_main_loads_config_and_runs_polling(monkeypatch) -> None:
     from screener_bot import __main__ as m
 
-    settings = SimpleNamespace(log_level="DEBUG", bot_config_path="cfg.yaml")
+    settings = SimpleNamespace(log_level="DEBUG")
     captured: dict = {}
 
-    def fake_load_config(path):
-        captured["config_path"] = path
+    def fake_load_config(s):
+        captured["settings"] = s
         return "CONFIG"
 
     monkeypatch.setattr(m, "load_settings", lambda: settings)
     monkeypatch.setattr(m, "load_config", fake_load_config)
+    monkeypatch.setattr(m, "_seed_portfolio_from_yaml", lambda _path: None)
 
     app = MagicMock()
 
@@ -27,7 +28,7 @@ def test_main_loads_config_and_runs_polling(monkeypatch) -> None:
 
     m.main()
 
-    assert captured["config_path"] == "cfg.yaml"
+    assert captured["settings"] is settings
     assert captured["build"] == (settings, "CONFIG")
     app.run_polling.assert_called_once_with()
 
@@ -35,9 +36,10 @@ def test_main_loads_config_and_runs_polling(monkeypatch) -> None:
 def test_main_falls_back_to_info_for_bad_log_level(monkeypatch) -> None:
     from screener_bot import __main__ as m
 
-    settings = SimpleNamespace(log_level="not-a-level", bot_config_path="cfg.yaml")
+    settings = SimpleNamespace(log_level="not-a-level")
     monkeypatch.setattr(m, "load_settings", lambda: settings)
-    monkeypatch.setattr(m, "load_config", lambda path: "CONFIG")
+    monkeypatch.setattr(m, "load_config", lambda s: "CONFIG")
+    monkeypatch.setattr(m, "_seed_portfolio_from_yaml", lambda _path: None)
     app = MagicMock()
     monkeypatch.setattr(m, "build_application", lambda s, c: app)
 

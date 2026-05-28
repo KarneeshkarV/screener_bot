@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Literal
 
-import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from . import portfolio_store
 
 
 Market = Literal["india", "us"]
@@ -155,18 +155,115 @@ class BotConfig(BaseModel):
 
 class EnvSettings(BaseSettings):
     telegram_bot_token: str | None = None
-    bot_config_path: str = "config/bot.yaml"
+    telegram_allowed_chat_ids: str = ""
+    turso_database_url: str | None = None
+    turso_auth_token: str | None = None
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    def chat_ids(self) -> list[int]:
+        return [
+            int(part)
+            for part in (chunk.strip() for chunk in self.telegram_allowed_chat_ids.split(","))
+            if part
+        ]
 
-def load_config(path: str | Path | None = None) -> BotConfig:
+
+DEFAULT_TIMEZONE = "Asia/Kolkata"
+
+DEFAULT_SCHEDULED_SCREENER = ScheduledScreenerConfig(
+    enabled=True,
+    times=["16:00", "02:30"],
+    working_directory=".",
+    timeout_seconds=300,
+    commands=[
+        ScreenerCommandConfig(
+            label="India EMA",
+            command=["uv", "run", "screener", "screen", "-m", "india", "-c", "ema", "-n", "30", "--csv"],
+        ),
+        ScreenerCommandConfig(
+            label="US EMA",
+            command=["uv", "run", "screener", "screen", "-m", "us", "-c", "ema", "-n", "30", "--csv"],
+        ),
+        ScreenerCommandConfig(
+            label="India GARP",
+            command=["uv", "run", "screener", "garp", "-m", "india", "-n", "30", "--csv"],
+        ),
+        ScreenerCommandConfig(
+            label="US GARP",
+            command=["uv", "run", "screener", "garp", "-m", "us", "-n", "30", "--csv"],
+        ),
+        ScreenerCommandConfig(
+            label="India Promoter Holding Change",
+            command=["uv", "run", "screener", "promoter-buys", "-m", "india", "--min-change", "0", "-n", "30", "--csv"],
+        ),
+        ScreenerCommandConfig(
+            label="US Insider Holding Change",
+            command=["uv", "run", "screener", "promoter-buys", "-m", "us", "-n", "30", "--csv"],
+        ),
+    ],
+)
+
+DEFAULT_ALERTS = AlertsConfig(
+    enabled=True,
+    interval_minutes=60,
+    near_high_pct=15.0,
+    volume_spike_multiple=2.0,
+)
+
+DEFAULT_RULESETS: dict[str, Ruleset] = {
+    "swing_momentum": Ruleset(
+        entry=RuleGroup(
+            all=[
+                RuleExpression(expression="rsi(close, 14) > 55"),
+                RuleExpression(expression="close > ema(close, 20)"),
+            ]
+        ),
+        exit=RuleGroup(
+            any=[
+                RuleExpression(expression="rsi(close, 14) < 45"),
+                RuleExpression(expression="close < ema(close, 20)"),
+            ]
+        ),
+    ),
+}
+
+DEFAULT_TECHNICAL_SNAPSHOT = TechnicalSnapshotConfig(
+    expressions=[
+        SnapshotExpression(label="RSI 14", expression="rsi(close, 14)"),
+        SnapshotExpression(label="Above EMA20", expression="close > ema(close, 20)"),
+        SnapshotExpression(label="Above EMA50", expression="close > ema(close, 50)"),
+    ]
+)
+
+
+def _fetch_portfolio_items() -> list[PortfolioItem]:
+    client = portfolio_store.connect()
+    if client is None:
+        raise RuntimeError(
+            "Turso is not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
+        )
+    try:
+        rows = portfolio_store.fetch_portfolio(client)
+    finally:
+        client.close()
+    return [PortfolioItem.model_validate(row) for row in rows]
+
+
+def load_config(settings: EnvSettings | None = None) -> BotConfig:
     load_dotenv()
-    resolved = Path(path or os.environ.get("BOT_CONFIG_PATH", "config/bot.yaml"))
-    with resolved.open("r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
-    return BotConfig.model_validate(raw)
+    settings = settings or load_settings()
+    portfolio = _fetch_portfolio_items()
+    return BotConfig(
+        timezone=DEFAULT_TIMEZONE,
+        telegram=TelegramConfig(allowed_chat_ids=settings.chat_ids()),
+        portfolio=portfolio,
+        rulesets=DEFAULT_RULESETS,
+        technical_snapshot=DEFAULT_TECHNICAL_SNAPSHOT,
+        scheduled_screener=DEFAULT_SCHEDULED_SCREENER,
+        alerts=DEFAULT_ALERTS,
+    )
 
 
 def load_settings() -> EnvSettings:

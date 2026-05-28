@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from screener_bot import config as config_module
 from screener_bot.config import (
     AlertsConfig,
     BotConfig,
@@ -14,14 +15,50 @@ from screener_bot.config import (
 )
 
 
-def test_loads_config() -> None:
-    config = load_config("config/bot.yaml")
-    assert all(isinstance(chat_id, int) for chat_id in config.telegram.allowed_chat_ids)
-    assert config.telegram.allowed_chat_ids
+class _FakeRows:
+    def __init__(self, rows):
+        self.rows = rows
+
+
+class _FakeClient:
+    def __init__(self, portfolio_rows):
+        self._portfolio_rows = portfolio_rows
+        self.closed = False
+
+    def execute(self, stmt: str, args=None):
+        if "SELECT symbol" in stmt:
+            return _FakeRows(self._portfolio_rows)
+        if "SELECT COUNT" in stmt:
+            return _FakeRows([(len(self._portfolio_rows),)])
+        return _FakeRows([])
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_load_config_pulls_portfolio_from_turso(monkeypatch) -> None:
+    rows = [
+        ("AAPL", "us", 267.18, "swing_momentum"),
+        ("NSE:ATHERENERG", "india", 906.78, "swing_momentum"),
+    ]
+    fake = _FakeClient(rows)
+    monkeypatch.setattr(config_module.portfolio_store, "connect", lambda: fake)
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "5526359855, 12345")
+
+    config = load_config()
+    assert {item.symbol for item in config.portfolio} == {"AAPL", "NSE:ATHERENERG"}
     assert {item.market for item in config.portfolio} == {"india", "us"}
+    assert config.telegram.allowed_chat_ids == [5526359855, 12345]
     assert config.scheduled_screener.enabled is True
     assert config.scheduled_screener.times == ["16:00", "02:30"]
     assert len(config.scheduled_screener.commands) == 6
+    assert fake.closed is True
+
+
+def test_load_config_raises_when_turso_unconfigured(monkeypatch) -> None:
+    monkeypatch.setattr(config_module.portfolio_store, "connect", lambda: None)
+    with pytest.raises(RuntimeError, match="Turso is not configured"):
+        load_config()
 
 
 def test_rejects_missing_symbol() -> None:
@@ -93,6 +130,12 @@ def test_alerts_validation() -> None:
         interval_minutes=30, near_high_pct=10.0, volume_spike_multiple=1.5
     )
     assert ok.interval_minutes == 30
+
+
+def test_env_settings_parses_chat_ids(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "1, 2 , 3")
+    settings = EnvSettings()
+    assert settings.chat_ids() == [1, 2, 3]
 
 
 def test_load_settings_returns_env_settings() -> None:

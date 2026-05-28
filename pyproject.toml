@@ -5,6 +5,7 @@ description = "Telegram bot for on-demand screener portfolio checks"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "libsql-client>=0.3",
     "mplfinance>=0.12.10b0",
     "pandas>=2.0",
     "pydantic>=2.0",
