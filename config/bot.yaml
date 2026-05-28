@@ -59,6 +59,22 @@ portfolio:
 
   - symbol: DELL
     market: us
+    avg_price: 239.09
+    ruleset: swing_momentum
+
+  - symbol: AVGO
+    market: us
+    avg_price: 425.00
+    ruleset: swing_momentum
+
+  - symbol: GOOGL
+    market: us
+    avg_price: 384.50
+    ruleset: swing_momentum
+
+  - symbol: IREN
+    market: us
+    avg_price: 61.78
     ruleset: swing_momentum
 
   # India (NSE) holdings
