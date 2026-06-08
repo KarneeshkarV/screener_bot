@@ -29,6 +29,7 @@ alerts:
   enabled: true
   interval_minutes: 60        # hourly change checks
   near_high_pct: 15           # alert when within 15% of the 52-week high
+  near_stop_pct: 3            # flag when price is within 3% above its stop-loss
   volume_spike_multiple: 2.0  # alert when volume >= 2x the 20-day average
   # chat_ids: []              # defaults to telegram.allowed_chat_ids
 
@@ -75,6 +76,24 @@ portfolio:
   - symbol: IREN
     market: us
     avg_price: 61.78
+    ruleset: swing_momentum
+
+  - symbol: AMD
+    market: us
+    avg_price: 485.00
+    stop_loss: 447.00
+    ruleset: swing_momentum
+
+  - symbol: MU
+    market: us
+    avg_price: 941.92
+    stop_loss: 860.00
+    ruleset: swing_momentum
+
+  - symbol: NET
+    market: us
+    avg_price: 252.92
+    stop_loss: 230.00
     ruleset: swing_momentum
 
   # India (NSE) holdings

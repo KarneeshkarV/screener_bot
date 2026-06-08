@@ -9,6 +9,12 @@ from pathlib import Path
 from .config import BotConfig
 from .technical import TechnicalService, TechnicalStatus
 
+# Attention banners prepended to the report when a stop-loss event fires, so a
+# breach is impossible to miss while scrolling. Hit (breached) outranks near.
+_BANNER_WIDTH = 12
+_STOP_HIT_BANNER = "🚨" * _BANNER_WIDTH
+_STOP_NEAR_BANNER = "⚠️" * _BANNER_WIDTH
+
 
 class AlertService:
     """Detect notable per-holding changes and report only what changed.
@@ -41,6 +47,8 @@ class AlertService:
         prev = self._load_state()
         new_state: dict[str, dict] = {}
         sections: list[str] = []
+        stop_hit = False
+        stop_near = False
 
         for status in statuses:
             symbol = status.item.symbol
@@ -59,15 +67,23 @@ class AlertService:
             lines = self._diff(status, old, cur)
             if lines:
                 sections.append(self._format_holding(status, lines))
+            if cur["at_stop"] and not old.get("at_stop"):
+                stop_hit = True
+            elif cur["near_stop"] and not old.get("near_stop"):
+                stop_near = True
 
         self._save_state(new_state)
 
         if not sections:
             return None
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        return "\n".join(
-            [f"<b>🔔 Alerts</b> <i>{escape(timestamp)}</i>", "", *sections]
-        )
+        header: list[str] = []
+        if stop_hit:
+            header += [_STOP_HIT_BANNER, ""]
+        elif stop_near:
+            header += [_STOP_NEAR_BANNER, ""]
+        header.append(f"<b>🔔 Alerts</b> <i>{escape(timestamp)}</i>")
+        return "\n".join([*header, "", *sections])
 
     def _compute_flags(self, status: TechnicalStatus) -> dict:
         alerts = self.config.alerts
@@ -88,6 +104,14 @@ class AlertService:
             and status.last_volume
             >= status.avg_volume_20 * alerts.volume_spike_multiple
         )
+        stop = status.item.stop_loss
+        at_stop = bool(stop is not None and close is not None and close <= stop)
+        near_stop = bool(
+            stop is not None
+            and close is not None
+            and not at_stop
+            and close <= stop * (1 + alerts.near_stop_pct / 100)
+        )
         return {
             "entry": status.entry.matched,
             "exit": status.exit.matched,
@@ -95,6 +119,8 @@ class AlertService:
             "at_low": at_low,
             "near_high": near_high,
             "vol_spike": vol_spike,
+            "near_stop": near_stop,
+            "at_stop": at_stop,
         }
 
     def _diff(self, status: TechnicalStatus, old: dict, cur: dict) -> list[str]:
@@ -118,6 +144,16 @@ class AlertService:
             )
 
         cur_symbol = self._currency(status)
+        stop = status.item.stop_loss
+        if cur["at_stop"] and not old.get("at_stop"):
+            lines.append(f"🛑 Stop-loss hit ({cur_symbol}{stop:.2f})")
+        elif cur["near_stop"] and not old.get("near_stop"):
+            gap = (status.close - stop) / stop * 100 if stop else 0.0
+            lines.append(
+                f"⚠️ Approaching stop-loss {cur_symbol}{stop:.2f} "
+                f"(+{gap:.1f}% above)"
+            )
+
         if cur["at_high"] and not old.get("at_high"):
             high = status.high_52w or 0.0
             lines.append(f"🚀 New 52-week high ({cur_symbol}{high:.2f})")

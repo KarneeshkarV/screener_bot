@@ -21,6 +21,7 @@ class PortfolioItem(BaseModel):
     symbol: str
     market: Market
     avg_price: float | None = None
+    stop_loss: float | None = None
     ruleset: str
 
     @field_validator("symbol", "ruleset")
@@ -107,6 +108,7 @@ class AlertsConfig(BaseModel):
     enabled: bool = True
     interval_minutes: int = 60
     near_high_pct: float = 15.0
+    near_stop_pct: float = 3.0
     volume_spike_multiple: float = 2.0
     chat_ids: list[int] = Field(default_factory=list)
 
@@ -117,9 +119,9 @@ class AlertsConfig(BaseModel):
             raise ValueError("must be positive")
         return value
 
-    @field_validator("near_high_pct")
+    @field_validator("near_high_pct", "near_stop_pct")
     @classmethod
-    def valid_near_high_pct(cls, value: float) -> float:
+    def valid_near_pct(cls, value: float) -> float:
         if not 0 < value < 100:
             raise ValueError("must be between 0 and 100")
         return value
@@ -209,6 +211,7 @@ DEFAULT_ALERTS = AlertsConfig(
     enabled=True,
     interval_minutes=60,
     near_high_pct=15.0,
+    near_stop_pct=3.0,
     volume_spike_multiple=2.0,
 )
 

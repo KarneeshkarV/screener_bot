@@ -38,8 +38,8 @@ class _FakeClient:
 
 def test_load_config_pulls_portfolio_from_turso(monkeypatch) -> None:
     rows = [
-        ("AAPL", "us", 267.18, "swing_momentum"),
-        ("NSE:ATHERENERG", "india", 906.78, "swing_momentum"),
+        ("AAPL", "us", 267.18, None, "swing_momentum"),
+        ("NSE:ATHERENERG", "india", 906.78, 850.0, "swing_momentum"),
     ]
     fake = _FakeClient(rows)
     monkeypatch.setattr(config_module.portfolio_store, "connect", lambda: fake)
@@ -48,6 +48,8 @@ def test_load_config_pulls_portfolio_from_turso(monkeypatch) -> None:
     config = load_config()
     assert {item.symbol for item in config.portfolio} == {"AAPL", "NSE:ATHERENERG"}
     assert {item.market for item in config.portfolio} == {"india", "us"}
+    stops = {item.symbol: item.stop_loss for item in config.portfolio}
+    assert stops == {"AAPL": None, "NSE:ATHERENERG": 850.0}
     assert config.telegram.allowed_chat_ids == [5526359855, 12345]
     assert config.scheduled_screener.enabled is True
     assert config.scheduled_screener.times == ["16:00", "02:30"]

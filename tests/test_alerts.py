@@ -33,8 +33,9 @@ def _status(
     low: float = 50.0,
     volume: float = 1000.0,
     avg_volume: float = 1000.0,
+    stop_loss: float | None = None,
 ) -> TechnicalStatus:
-    item = PortfolioItem(symbol="AAPL", market="us", ruleset="x")
+    item = PortfolioItem(symbol="AAPL", market="us", ruleset="x", stop_loss=stop_loss)
     status = TechnicalStatus(item=item, ticker="AAPL")
     status.close = close
     status.daily_change_pct = 1.0
@@ -182,6 +183,95 @@ def test_new_52_week_low(tmp_path) -> None:
 
     assert report is not None
     assert "New 52-week low" in report
+
+
+def test_approaching_stop_loss_flag(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    # Baseline well above the stop, then drift to within near_stop_pct (3%).
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=120.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=102.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+
+    assert report is not None
+    assert "Approaching stop-loss" in report
+    assert "$100.00" in report
+
+
+def test_stop_loss_hit_flag(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=120.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=99.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+
+    assert report is not None
+    assert "Stop-loss hit" in report
+
+
+def test_stop_hit_prepends_siren_banner(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=120.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=99.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+    assert report is not None
+    # Banner is the very first line, before the "🔔 Alerts" header.
+    assert report.startswith("🚨🚨")
+    assert report.index("🚨") < report.index("🔔 Alerts")
+
+
+def test_near_stop_prepends_warning_banner_not_siren(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=120.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=102.0, exit_matched=False, stop_loss=100.0)]),
+        state_path=path,
+    ).evaluate()
+    assert report is not None
+    assert report.startswith("⚠️⚠️")
+    assert "🚨" not in report  # approaching only -> no siren banner
+
+
+def test_no_stop_loss_means_no_stop_flag(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=120.0, exit_matched=False)]),
+        state_path=path,
+    ).evaluate()
+    report = AlertService(
+        _config(),
+        _StubTechnical([_status(close=10.0, exit_matched=False)]),
+        state_path=path,
+    ).evaluate()
+    # Price collapsed but no stop configured -> no stop-loss line (other flags only).
+    assert report is None or "stop-loss" not in report.lower()
 
 
 def test_chat_ids_prefer_alerts_config(tmp_path) -> None:

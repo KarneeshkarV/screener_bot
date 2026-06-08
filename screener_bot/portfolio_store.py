@@ -61,25 +61,31 @@ def ensure_portfolio_table(client: _Client) -> None:
             symbol TEXT NOT NULL,
             market TEXT NOT NULL,
             avg_price REAL,
+            stop_loss REAL,
             ruleset TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             UNIQUE(symbol, market)
         )
         """
     )
+    # Migration: add stop_loss to tables created before the column existed.
+    columns = {str(row[1]) for row in client.execute(f"PRAGMA table_info({TABLE_NAME})").rows}
+    if "stop_loss" not in columns:
+        client.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN stop_loss REAL")
 
 
 def fetch_portfolio(client: _Client) -> list[dict[str, Any]]:
     ensure_portfolio_table(client)
     rows = client.execute(
-        f"SELECT symbol, market, avg_price, ruleset FROM {TABLE_NAME} ORDER BY id"
+        f"SELECT symbol, market, avg_price, stop_loss, ruleset FROM {TABLE_NAME} ORDER BY id"
     ).rows
     return [
         {
             "symbol": str(row[0]),
             "market": str(row[1]),
             "avg_price": float(row[2]) if row[2] is not None else None,
-            "ruleset": str(row[3]),
+            "stop_loss": float(row[3]) if row[3] is not None else None,
+            "ruleset": str(row[4]),
         }
         for row in rows
     ]
@@ -92,13 +98,14 @@ def seed_portfolio(client: _Client, items: list[dict[str, Any]]) -> int:
     for item in items:
         client.execute(
             f"""
-            INSERT OR IGNORE INTO {TABLE_NAME} (symbol, market, avg_price, ruleset)
-            VALUES (?, ?, ?, ?)
+            INSERT OR IGNORE INTO {TABLE_NAME} (symbol, market, avg_price, stop_loss, ruleset)
+            VALUES (?, ?, ?, ?, ?)
             """,
             [
                 item["symbol"],
                 item["market"],
                 item.get("avg_price"),
+                item.get("stop_loss"),
                 item["ruleset"],
             ],
         )
