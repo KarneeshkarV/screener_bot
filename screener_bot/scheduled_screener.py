@@ -3,17 +3,22 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
 from io import StringIO
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from .config import BotConfig, ScreenerCommandConfig
 from .formatting import split_messages
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +42,9 @@ class ScheduledScreenerService:
             if snapshot_path is not None
             else Path.home() / ".screener_bot" / "screener_snapshots.json"
         )
+        # Guards against overlapping runs (scheduled job firing while a
+        # previous scheduled or manual run is still going).
+        self.run_lock = asyncio.Lock()
 
     def chat_ids(self) -> list[int]:
         configured = self.config.scheduled_screener.chat_ids
@@ -78,6 +86,7 @@ class ScheduledScreenerService:
             except asyncio.TimeoutError:
                 proc.kill()
                 stdout_raw, stderr_raw = await proc.communicate()
+                await proc.wait()  # ensure the killed process is reaped
                 return CommandResult(
                     command,
                     proc.returncode,
@@ -97,7 +106,7 @@ class ScheduledScreenerService:
     def _format_report(
         self, results: list[CommandResult], show_all: bool = False
     ) -> str:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        timestamp = self._now().strftime("%Y-%m-%d %H:%M")
         lines = [f"<b>Screener Job</b> <i>{escape(timestamp)}</i>"]
         for result in results:
             status = "timed out" if result.timed_out else f"exit {result.returncode}"
@@ -122,7 +131,7 @@ class ScheduledScreenerService:
         return "\n".join(lines)
 
     def _format_delta_report(self, results: list[CommandResult]) -> str:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        timestamp = self._now().strftime("%Y-%m-%d %H:%M")
         lines = [f"<b>Screener Changes</b> <i>{escape(timestamp)}</i>"]
         snapshots = self._load_snapshots()
         changed = False
@@ -177,6 +186,9 @@ class ScheduledScreenerService:
             self._save_snapshots(snapshots)
         return "\n".join(lines)
 
+    def _now(self) -> datetime:
+        return datetime.now(ZoneInfo(self.config.timezone))
+
     def _load_snapshots(self) -> dict[str, list[str]]:
         try:
             with self.snapshot_path.open("r", encoding="utf-8") as fh:
@@ -192,12 +204,20 @@ class ScheduledScreenerService:
         return snapshots
 
     def _save_snapshots(self, snapshots: dict[str, list[str]]) -> None:
+        # Write to a temp file and atomically replace so a crash mid-write can
+        # never leave a truncated/corrupt snapshot file behind.
+        tmp_path = self.snapshot_path.with_name(self.snapshot_path.name + ".tmp")
         try:
             self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.snapshot_path.open("w", encoding="utf-8") as fh:
+            with tmp_path.open("w", encoding="utf-8") as fh:
                 json.dump(snapshots, fh, indent=2, sort_keys=True)
-        except OSError:
-            return
+            os.replace(tmp_path, self.snapshot_path)
+        except OSError as exc:
+            logger.warning(
+                "could not persist screener snapshots to %s: %s",
+                self.snapshot_path,
+                exc,
+            )
 
 
 def _truncate(value: str, limit: int = 650) -> str:
@@ -446,12 +466,24 @@ async def send_screener_report(
     query: str | None = None,
     full_list: bool = False,
 ) -> None:
-    report = await service.run(query=query, full_list=full_list)
-    targets = chat_ids or service.chat_ids()
-    for chat_id in targets:
-        for message in split_messages(report):
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode=ParseMode.HTML,
-            )
+    lock: asyncio.Lock | None = getattr(service, "run_lock", None)
+    if lock is not None and lock.locked():
+        logger.warning("screener run skipped: previous run still in progress")
+        return
+    if lock is None:  # stub services without a lock get a throwaway one
+        lock = asyncio.Lock()
+    async with lock:
+        report = await service.run(query=query, full_list=full_list)
+        targets = chat_ids or service.chat_ids()
+        for chat_id in targets:
+            for message in split_messages(report):
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to send screener report message to chat %s", chat_id
+                    )

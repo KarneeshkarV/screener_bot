@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import time
+from datetime import datetime, time
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 from telegram import (
@@ -78,6 +79,34 @@ def _holdings_keyboard(config: BotConfig) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+# Notify the admin at most once per job per hour.
+_ADMIN_NOTIFY_SECONDS = 3600.0
+
+
+class _AdminNotifier:
+    """Send short failure notes to an optional admin chat, throttled per job."""
+
+    def __init__(self, config: BotConfig) -> None:
+        self._chat_id = config.telegram.admin_chat_id
+        self._timezone = config.timezone
+        self._last_sent: dict[str, float] = {}
+
+    async def notify(self, bot, job_name: str, error: BaseException) -> None:
+        if self._chat_id is None:
+            return
+        now = monotonic()
+        last = self._last_sent.get(job_name)
+        if last is not None and now - last < _ADMIN_NOTIFY_SECONDS:
+            return
+        self._last_sent[job_name] = now
+        timestamp = datetime.now(ZoneInfo(self._timezone)).strftime("%Y-%m-%d %H:%M")
+        text = f"⚠️ Job {job_name} failed: {type(error).__name__} at {timestamp}"
+        try:
+            await bot.send_message(chat_id=self._chat_id, text=text)
+        except Exception:
+            logging.exception("admin error notification failed for job %s", job_name)
+
+
 def _authorized(config: BotConfig, update: Update) -> bool:
     chat = update.effective_chat
     return bool(chat and chat.id in config.telegram.allowed_chat_ids)
@@ -108,6 +137,9 @@ def build_application(
     # Share the technical service (and its price cache) with the alert engine.
     alert_service = alert_service or AlertService(config, technical_service)
     app = Application.builder().token(settings.telegram_bot_token).build()
+    notifier = _AdminNotifier(config)
+    # Prevents a manual /alerts check and the scheduled job from overlapping.
+    alert_lock = asyncio.Lock()
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.message:
@@ -160,23 +192,29 @@ def build_application(
     ) -> None:
         try:
             report = await asyncio.to_thread(_portfolio_report)
-        except Exception:
+        except Exception as exc:
             logging.exception("scheduled portfolio check failed")
+            await notifier.notify(context.bot, "scheduled-portfolio-check", exc)
             return
         targets = config.scheduled_screener.chat_ids or config.telegram.allowed_chat_ids
         for chat_id in targets:
             messages = split_messages(report)
             for index, message in enumerate(messages):
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=(
-                        _holdings_keyboard(config)
-                        if index == len(messages) - 1
-                        else None
-                    ),
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=(
+                            _holdings_keyboard(config)
+                            if index == len(messages) - 1
+                            else None
+                        ),
+                    )
+                except Exception:
+                    logging.exception(
+                        "failed to send portfolio report message to chat %s", chat_id
+                    )
 
     async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await _guard(config, update) and update.effective_chat and update.message:
@@ -278,34 +316,49 @@ def build_application(
     ) -> None:
         if not (await _guard(config, update) and update.message):
             return
-        await update.message.reply_text("Checking for alerts...")
-        try:
-            report = await asyncio.to_thread(alert_service.evaluate)
-        except Exception:
-            logging.exception("manual alert check failed")
-            await update.message.reply_text("Alert check failed. See logs.")
+        if alert_lock.locked():
+            logging.warning("alert check skipped: previous run still in progress")
+            await update.message.reply_text("Alert check already running.")
             return
-        if not report:
-            await update.message.reply_text("No changes since last check.")
-            return
-        for message in split_messages(report):
-            await update.message.reply_text(message, parse_mode=ParseMode.HTML)
+        async with alert_lock:
+            await update.message.reply_text("Checking for alerts...")
+            try:
+                report = await asyncio.to_thread(alert_service.evaluate)
+            except Exception:
+                logging.exception("manual alert check failed")
+                await update.message.reply_text("Alert check failed. See logs.")
+                return
+            if not report:
+                await update.message.reply_text("No changes since last check.")
+                return
+            for message in split_messages(report):
+                await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
     async def _alert_check(context: ContextTypes.DEFAULT_TYPE) -> None:
-        try:
-            report = await asyncio.to_thread(alert_service.evaluate)
-        except Exception:
-            logging.exception("scheduled alert check failed")
+        if alert_lock.locked():
+            logging.warning("alert check skipped: previous run still in progress")
             return
-        if not report:
-            return
-        for chat_id in alert_service.chat_ids():
-            for message in split_messages(report):
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    parse_mode=ParseMode.HTML,
-                )
+        async with alert_lock:
+            try:
+                report = await asyncio.to_thread(alert_service.evaluate)
+            except Exception as exc:
+                logging.exception("scheduled alert check failed")
+                await notifier.notify(context.bot, "portfolio-alerts", exc)
+                return
+            if not report:
+                return
+            for chat_id in alert_service.chat_ids():
+                for message in split_messages(report):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=message,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        logging.exception(
+                            "failed to send alert message to chat %s", chat_id
+                        )
 
     async def detail_callback(
         update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -336,7 +389,7 @@ def build_application(
         CallbackQueryHandler(detail_callback, pattern=f"^{CALLBACK_DETAIL}\\|")
     )
     app.post_init = _post_init(
-        config, screener_service, _scheduled_portfolio_check, _alert_check
+        config, screener_service, _scheduled_portfolio_check, _alert_check, notifier
     )
     return app
 
@@ -350,10 +403,11 @@ def _post_init(
     screener_service: ScheduledScreenerService,
     portfolio_callback,
     alert_callback,
+    notifier: _AdminNotifier | None = None,
 ):
     async def post_init(app: Application) -> None:
         await _register_commands(app)
-        _schedule_screener_jobs(app, config, screener_service)
+        _schedule_screener_jobs(app, config, screener_service, notifier)
         _schedule_portfolio_jobs(app, config, portfolio_callback)
         _schedule_alert_jobs(app, config, alert_callback)
 
@@ -399,6 +453,7 @@ def _schedule_screener_jobs(
     app: Application,
     config: BotConfig,
     screener_service: ScheduledScreenerService,
+    notifier: _AdminNotifier | None = None,
 ) -> None:
     scheduled = config.scheduled_screener
     if not scheduled.enabled or not scheduled.times:
@@ -407,27 +462,35 @@ def _schedule_screener_jobs(
         logging.warning("scheduled screener disabled: application has no job queue")
         return
 
+    async def callback(context: ContextTypes.DEFAULT_TYPE) -> None:
+        await _scheduled_screener_callback(context, notifier)
+
     tz = ZoneInfo(config.timezone)
     for item in scheduled.times:
         hour, minute = (int(part) for part in item.split(":"))
         run_time = time(hour=hour, minute=minute, tzinfo=tz)
         app.job_queue.run_daily(
-            _scheduled_screener_callback,
+            callback,
             time=run_time,
             data=screener_service,
             name=f"scheduled-screener-{item}",
         )
 
 
-async def _scheduled_screener_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _scheduled_screener_callback(
+    context: ContextTypes.DEFAULT_TYPE,
+    notifier: _AdminNotifier | None = None,
+) -> None:
     service = context.job.data
     if not isinstance(service, ScheduledScreenerService):
         logging.error("scheduled screener job missing service")
         return
     try:
         await send_screener_report(context, service)
-    except Exception:
+    except Exception as exc:
         logging.exception("scheduled screener job failed")
+        if notifier is not None:
+            await notifier.notify(context.bot, "scheduled-screener", exc)
 
 
 def _scheduled_status(config: BotConfig) -> str:

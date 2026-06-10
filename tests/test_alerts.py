@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+
+from screener_bot import alerts as alerts_module
 from screener_bot.alerts import AlertService
 from screener_bot.config import BotConfig, PortfolioItem
 from screener_bot.technical import RuleStatus, TechnicalStatus
@@ -302,6 +305,40 @@ def test_load_state_filters_malformed_entries(tmp_path) -> None:
     )
     # "BAD" has a non-dict value and is dropped; the run completes without error.
     assert service.evaluate() is None
+
+
+def test_save_state_atomic_survives_replace_failure(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    path = tmp_path / "state.json"
+    AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=False)]),
+        state_path=path,
+    ).evaluate()
+    original = path.read_text()
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(alerts_module.os, "replace", boom)
+    service = AlertService(
+        _config(),
+        _StubTechnical([_status(close=100.0, exit_matched=True)]),
+        state_path=path,
+    )
+    with caplog.at_level(logging.WARNING):
+        service.evaluate()  # persistence failure must not raise
+
+    # The previous state file is untouched (no truncated/corrupt overwrite).
+    assert path.read_text() == original
+    warning = next(
+        record
+        for record in caplog.records
+        if "could not persist alert state" in record.getMessage()
+    )
+    assert str(path) in warning.getMessage()
+    assert "disk full" in warning.getMessage()
 
 
 def test_save_state_oserror_is_swallowed(tmp_path) -> None:

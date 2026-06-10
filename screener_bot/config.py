@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -15,6 +14,8 @@ Market = Literal["india", "us"]
 
 class TelegramConfig(BaseModel):
     allowed_chat_ids: list[int] = Field(default_factory=list)
+    # Optional chat that receives short error notes when a scheduled job fails.
+    admin_chat_id: int | None = None
 
 
 class PortfolioItem(BaseModel):
@@ -158,6 +159,7 @@ class BotConfig(BaseModel):
 class EnvSettings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_allowed_chat_ids: str = ""
+    telegram_admin_chat_id: int | None = None
     turso_database_url: str | None = None
     turso_auth_token: str | None = None
     log_level: str = "INFO"
@@ -260,7 +262,10 @@ def load_config(settings: EnvSettings | None = None) -> BotConfig:
     portfolio = _fetch_portfolio_items()
     return BotConfig(
         timezone=DEFAULT_TIMEZONE,
-        telegram=TelegramConfig(allowed_chat_ids=settings.chat_ids()),
+        telegram=TelegramConfig(
+            allowed_chat_ids=settings.chat_ids(),
+            admin_chat_id=settings.telegram_admin_chat_id,
+        ),
         portfolio=portfolio,
         rulesets=DEFAULT_RULESETS,
         technical_snapshot=DEFAULT_TECHNICAL_SNAPSHOT,

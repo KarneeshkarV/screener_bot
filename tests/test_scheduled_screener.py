@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from screener_bot import scheduled_screener as scheduled_module
 from screener_bot.config import BotConfig, ScreenerCommandConfig
 from screener_bot.scheduled_screener import (
     ScheduledScreenerService,
@@ -354,6 +357,31 @@ def test_save_snapshots_oserror_is_swallowed(tmp_path) -> None:
     assert "Added:" in report  # produced despite snapshot persistence failing
 
 
+def test_save_snapshots_atomic_survives_replace_failure(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    path = tmp_path / "s.json"
+    path.write_text('{"India EMA": ["AAA"]}')
+    service = ScheduledScreenerService(_cfg(commands=[]), path)
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(scheduled_module.os, "replace", boom)
+    with caplog.at_level(logging.WARNING):
+        service._save_snapshots({"India EMA": ["BBB"]})  # must not raise
+
+    # The previous snapshot file is untouched (no truncated/corrupt overwrite).
+    assert json.loads(path.read_text()) == {"India EMA": ["AAA"]}
+    warning = next(
+        record
+        for record in caplog.records
+        if "could not persist screener snapshots" in record.getMessage()
+    )
+    assert str(path) in warning.getMessage()
+    assert "disk full" in warning.getMessage()
+
+
 # --- send_screener_report --------------------------------------------------
 
 
@@ -382,3 +410,36 @@ def test_send_screener_report_explicit_chat_ids(tmp_path) -> None:
     ctx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
     run(send_screener_report(ctx, service, chat_ids=[42]))
     assert ctx.bot.send_message.await_args_list[0].kwargs["chat_id"] == 42
+
+
+def test_send_screener_report_skips_when_run_in_progress(tmp_path, caplog) -> None:
+    config = _cfg(commands=[{"label": "X", "command": _py("print('hi')")}])
+    service = ScheduledScreenerService(config, tmp_path / "s.json")
+    ctx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+
+    async def scenario() -> None:
+        async with service.run_lock:  # a previous run is still holding the lock
+            await send_screener_report(ctx, service)
+
+    with caplog.at_level(logging.WARNING):
+        run(scenario())
+
+    ctx.bot.send_message.assert_not_awaited()
+    assert any(
+        "previous run still in progress" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_send_screener_report_logs_send_failures(tmp_path, caplog) -> None:
+    config = _cfg(commands=[{"label": "X", "command": _py("pass")}], chat_ids=[5, 6])
+    service = ScheduledScreenerService(config, tmp_path / "s.json")
+    send = AsyncMock(side_effect=[RuntimeError("telegram down"), None])
+    ctx = SimpleNamespace(bot=SimpleNamespace(send_message=send))
+    with caplog.at_level(logging.ERROR):
+        run(send_screener_report(ctx, service))  # first send fails, second goes out
+    assert send.await_count == 2
+    assert any(
+        "failed to send screener report message" in record.getMessage()
+        for record in caplog.records
+    )

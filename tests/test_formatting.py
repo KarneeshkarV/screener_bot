@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from screener_bot.config import PortfolioItem
 from screener_bot.formatting import (
+    SAFE_LIMIT,
+    TELEGRAM_LIMIT,
     _currency,
     _fmt_delta,
     _fmt_number,
@@ -246,6 +248,22 @@ def test_split_messages_handles_unclosed_pre_at_end() -> None:
     text = "<pre>" + "\n".join("a" * 30 for _ in range(20))
     messages = split_messages(text, limit=80)
     assert len(messages) >= 1
+
+
+def test_split_messages_default_limit_stays_below_telegram_cap() -> None:
+    text = "\n".join("<b>row</b> " + "y" * 90 for _ in range(200))
+    messages = split_messages(text)
+    assert len(messages) > 1
+    assert all(len(message) <= SAFE_LIMIT for message in messages)
+    assert all(len(message) < TELEGRAM_LIMIT for message in messages)
+
+
+def test_split_messages_clamps_oversized_limit() -> None:
+    # A caller-supplied limit above the safe cap must not produce messages
+    # that Telegram would reject once HTML overhead is counted.
+    messages = split_messages("x" * 20000, limit=TELEGRAM_LIMIT * 2)
+    assert all(len(message) <= SAFE_LIMIT for message in messages)
+    assert "".join(messages) == "x" * 20000
 
 
 def test_split_long_line() -> None:

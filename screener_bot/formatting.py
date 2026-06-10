@@ -206,6 +206,10 @@ def format_detail_report(status: DetailStatus) -> str:
 
 
 def split_messages(text: str, limit: int = SAFE_LIMIT) -> list[str]:
+    # Telegram rejects messages above TELEGRAM_LIMIT (4096) chars. Clamp to
+    # SAFE_LIMIT so HTML tags and escaped entities (&amp; etc.) added around
+    # split points always leave headroom below the hard limit.
+    limit = max(1, min(limit, SAFE_LIMIT))
     if len(text) <= limit:
         return [text]
     messages: list[str] = []
@@ -249,7 +253,14 @@ def split_messages(text: str, limit: int = SAFE_LIMIT) -> list[str]:
         flush_current()
         messages.extend(_split_pre_block("\n".join(pre_lines), limit))
     flush_current()
-    return messages
+    # Hard cap: no message may ever exceed the limit, whatever path built it.
+    capped: list[str] = []
+    for message in messages:
+        if len(message) <= limit:
+            capped.append(message)
+        else:
+            capped.extend(_split_long_line(message, limit))
+    return capped
 
 
 def _split_long_line(line: str, limit: int) -> list[str]:
