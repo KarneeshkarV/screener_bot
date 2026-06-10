@@ -8,6 +8,7 @@ import types
 from screener_bot.config import PortfolioItem
 from screener_bot.ownership import (
     OwnershipService,
+    OwnershipStatus,
     _as_float,
     _india_name,
     fetch_india_shareholding,
@@ -142,6 +143,88 @@ def test_us_insider_fetch_raises(monkeypatch) -> None:
 
 def test_check_portfolio_empty_list() -> None:
     assert OwnershipService().check_portfolio([]) == {}
+
+
+def test_check_portfolio_parallel_india_fetches_resolve_all() -> None:
+    import threading
+
+    barrier = threading.Barrier(4, timeout=5)
+    seen_threads: set[str] = set()
+    lock = threading.Lock()
+
+    def stub_fetcher(symbol: str) -> OwnershipStatus:
+        # All four fetches must be in flight at once for the barrier to
+        # release; a sequential implementation would deadlock (timeout).
+        barrier.wait()
+        with lock:
+            seen_threads.add(threading.current_thread().name)
+        return OwnershipStatus(
+            symbol=symbol, market="india", promoter_pct_latest=float(len(symbol))
+        )
+
+    items = [
+        PortfolioItem(symbol=f"NSE:S{i}", market="india", ruleset="x")
+        for i in range(4)
+    ]
+    out = OwnershipService(india_fetcher=stub_fetcher).check_portfolio(items)
+    assert list(out) == [item.symbol for item in items]
+    for item in items:
+        status = out[item.symbol]
+        assert status.symbol == item.symbol
+        assert status.promoter_pct_latest == float(len(item.symbol))
+    assert len(seen_threads) == 4
+
+
+def test_check_portfolio_worker_cap_and_order(monkeypatch) -> None:
+    import threading
+    import time
+
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def stub_fetcher(symbol: str) -> OwnershipStatus:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+        return OwnershipStatus(symbol=symbol, market="india")
+
+    items = [
+        PortfolioItem(symbol=f"NSE:S{i}", market="india", ruleset="x")
+        for i in range(10)
+    ]
+    out = OwnershipService(india_fetcher=stub_fetcher, max_workers=2).check_portfolio(
+        items
+    )
+    assert list(out) == [item.symbol for item in items]
+    assert all(out[item.symbol].error is None for item in items)
+    assert peak <= 2
+
+
+def test_check_portfolio_mixed_markets_aggregation(monkeypatch) -> None:
+    def stub_fetcher(symbol: str) -> OwnershipStatus:
+        return OwnershipStatus(symbol=symbol, market="india", promoter_pct_latest=42.0)
+
+    def fake_fetch(universe, market):
+        return pd.DataFrame(
+            [{"name": "AAPL", "yf_net_shares_6m": 100, "yf_net_pct_6m": 0.1}]
+        )
+
+    monkeypatch.setattr("screener_bot.ownership.fetch_yfinance_insiders", fake_fetch)
+    items = [
+        PortfolioItem(symbol="NSE:RELIANCE", market="india", ruleset="x"),
+        PortfolioItem(symbol="AAPL", market="us", ruleset="x"),
+        PortfolioItem(symbol="NSE:TCS", market="india", ruleset="x"),
+    ]
+    out = OwnershipService(india_fetcher=stub_fetcher).check_portfolio(items)
+    assert set(out) == {"NSE:RELIANCE", "AAPL", "NSE:TCS"}
+    assert out["NSE:RELIANCE"].promoter_pct_latest == 42.0
+    assert out["NSE:TCS"].promoter_pct_latest == 42.0
+    assert out["AAPL"].yf_net_shares_6m == 100
 
 
 def test_check_portfolio_india_item(monkeypatch) -> None:

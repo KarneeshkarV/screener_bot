@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import time
 
@@ -84,12 +86,33 @@ def fetch_india_shareholding(symbol: str) -> OwnershipStatus:
     return status
 
 
+_MAX_FETCH_WORKERS = 4
+
+
 class OwnershipService:
+    def __init__(
+        self,
+        india_fetcher: Callable[[str], OwnershipStatus] = fetch_india_shareholding,
+        max_workers: int = _MAX_FETCH_WORKERS,
+    ) -> None:
+        self._india_fetcher = india_fetcher
+        self._max_workers = max(1, max_workers)
+
     def check_portfolio(self, items: list[PortfolioItem]) -> dict[str, OwnershipStatus]:
         out: dict[str, OwnershipStatus] = {}
         india_items = [item for item in items if item.market == "india"]
-        for item in india_items:
-            out[item.symbol] = fetch_india_shareholding(item.symbol)
+        if india_items:
+            # Each fetch is independent (fresh _HttpScraper per call, no shared
+            # session) and keeps its own retry loop, so fan out across a small
+            # pool instead of paying the retry sleeps sequentially. pool.map
+            # preserves input order, so aggregation order is unchanged.
+            workers = min(self._max_workers, len(india_items))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                statuses = list(
+                    pool.map(self._india_fetcher, [item.symbol for item in india_items])
+                )
+            for item, status in zip(india_items, statuses):
+                out[item.symbol] = status
 
         us_items = [item for item in items if item.market == "us"]
         if us_items:
