@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 TABLE_NAME = "bot_portfolio"
 
+# Ruleset assigned to holdings created via bot commands; matches
+# config.DEFAULT_RULESETS.
+DEFAULT_RULESET = "swing_momentum"
+
 
 class _Client(Protocol):
     def execute(self, stmt: str, args: list[object] | None = None): ...
@@ -117,3 +121,113 @@ def portfolio_is_empty(client: _Client) -> bool:
     ensure_portfolio_table(client)
     rows = client.execute(f"SELECT COUNT(*) FROM {TABLE_NAME}").rows
     return int(rows[0][0]) == 0
+
+
+def upsert_holding(
+    client: _Client,
+    symbol: str,
+    market: str,
+    avg_price: float,
+    stop_loss: float | None = None,
+    ruleset: str = DEFAULT_RULESET,
+) -> dict[str, Any]:
+    """Insert or update a holding; returns the saved row.
+
+    When ``stop_loss`` is omitted an existing stop is kept; the ruleset of an
+    existing row is never changed.
+    """
+    ensure_portfolio_table(client)
+    client.execute(
+        f"""
+        INSERT INTO {TABLE_NAME} (symbol, market, avg_price, stop_loss, ruleset)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(symbol, market) DO UPDATE SET
+            avg_price = excluded.avg_price,
+            stop_loss = COALESCE(excluded.stop_loss, stop_loss)
+        """,
+        [symbol, market, avg_price, stop_loss, ruleset],
+    )
+    rows = client.execute(
+        f"SELECT symbol, market, avg_price, stop_loss, ruleset FROM {TABLE_NAME} "
+        "WHERE symbol = ? AND market = ?",
+        [symbol, market],
+    ).rows
+    row = rows[0]
+    return {
+        "symbol": str(row[0]),
+        "market": str(row[1]),
+        "avg_price": float(row[2]) if row[2] is not None else None,
+        "stop_loss": float(row[3]) if row[3] is not None else None,
+        "ruleset": str(row[4]),
+    }
+
+
+def delete_holding(client: _Client, symbol: str) -> int:
+    """Delete all holdings for ``symbol``; returns the number of rows removed."""
+    ensure_portfolio_table(client)
+    rows = client.execute(
+        f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE symbol = ?", [symbol]
+    ).rows
+    count = int(rows[0][0])
+    if count:
+        client.execute(f"DELETE FROM {TABLE_NAME} WHERE symbol = ?", [symbol])
+    return count
+
+
+def update_stop_loss(client: _Client, symbol: str, stop_loss: float) -> int:
+    """Set the stop-loss for ``symbol``; returns the number of rows updated."""
+    ensure_portfolio_table(client)
+    rows = client.execute(
+        f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE symbol = ?", [symbol]
+    ).rows
+    count = int(rows[0][0])
+    if count:
+        client.execute(
+            f"UPDATE {TABLE_NAME} SET stop_loss = ? WHERE symbol = ?",
+            [stop_loss, symbol],
+        )
+    return count
+
+
+class PortfolioRepo:
+    """Synchronous CRUD facade that opens a fresh Turso client per operation.
+
+    Handlers run these methods via ``asyncio.to_thread`` to keep blocking
+    network I/O off the event loop.
+    """
+
+    def _client(self) -> _Client:
+        client = connect()
+        if client is None:
+            raise RuntimeError(
+                "Turso is not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
+            )
+        return client
+
+    def upsert(
+        self,
+        symbol: str,
+        market: str,
+        avg_price: float,
+        stop_loss: float | None = None,
+        ruleset: str = DEFAULT_RULESET,
+    ) -> dict[str, Any]:
+        client = self._client()
+        try:
+            return upsert_holding(client, symbol, market, avg_price, stop_loss, ruleset)
+        finally:
+            client.close()
+
+    def remove(self, symbol: str) -> int:
+        client = self._client()
+        try:
+            return delete_holding(client, symbol)
+        finally:
+            client.close()
+
+    def set_stop(self, symbol: str, stop_loss: float) -> int:
+        client = self._client()
+        try:
+            return update_stop_loss(client, symbol, stop_loss)
+        finally:
+            client.close()

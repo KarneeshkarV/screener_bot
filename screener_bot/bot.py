@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime, time
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -20,9 +21,10 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from . import portfolio_store
 from .alerts import AlertService
 from .charts import render_price_chart
-from .config import BotConfig, EnvSettings
+from .config import BotConfig, EnvSettings, PortfolioItem
 from .formatting import (
     format_detail_report,
     format_portfolio_report,
@@ -41,10 +43,20 @@ HELP_TEXT = (
     "/run_all india ema - run one screener and show all returned rows\n"
     "/check_portfolio - check every configured holding\n"
     "/stock SYMBOL - detailed technicals + chart for any symbol\n"
+    "/add SYMBOL AVG_PRICE [us|india] [sl=STOP] - add or update a holding\n"
+    "/remove SYMBOL - remove a holding\n"
+    "/setstop SYMBOL STOP - update a holding's stop-loss\n"
     "/alerts - check holdings for changes now\n"
     "/status - show bot status\n"
     "/help - show this help"
 )
+
+ADD_USAGE = (
+    "Usage: /add SYMBOL AVG_PRICE [us|india] [sl=STOP]\n"
+    "Examples: /add AAPL 190.5 · /add NSE:TCS 3500 sl=3300 · /add TCS 3500 india"
+)
+REMOVE_USAGE = "Usage: /remove SYMBOL"
+SETSTOP_USAGE = "Usage: /setstop SYMBOL STOP"
 
 CALLBACK_DETAIL = "d"
 
@@ -56,8 +68,58 @@ BOT_COMMANDS = [
     BotCommand("run_all", "Run all screeners and show current lists"),
     BotCommand("check_portfolio", "Check every configured holding"),
     BotCommand("stock", "Detailed technicals + chart for any symbol"),
+    BotCommand("add", "Add or update a holding"),
+    BotCommand("remove", "Remove a holding"),
+    BotCommand("setstop", "Update a holding's stop-loss"),
     BotCommand("alerts", "Check holdings for changes now"),
 ]
+
+
+def _parse_positive(text: str) -> float | None:
+    """Parse a strictly positive, finite number; None when invalid."""
+    try:
+        value = float(text.replace(",", ""))
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
+
+
+def _infer_market(symbol: str) -> str:
+    """Default market for a normalized symbol.
+
+    Mirrors ``TechnicalService._candidate_markets``: NSE/BSE prefixes and
+    .NS/.BO suffixes mean India, everything else defaults to the US market.
+    """
+    if ":" in symbol:
+        exchange = symbol.split(":", 1)[0]
+        return "india" if exchange in {"NSE", "BSE"} else "us"
+    if symbol.endswith((".NS", ".BO")):
+        return "india"
+    return "us"
+
+
+def _sync_saved_holding(config: BotConfig, saved: dict) -> None:
+    """Reflect an upserted row in the in-memory portfolio."""
+    item = PortfolioItem.model_validate(saved)
+    for index, existing in enumerate(config.portfolio):
+        if existing.symbol == item.symbol and existing.market == item.market:
+            config.portfolio[index] = item
+            return
+    config.portfolio.append(item)
+
+
+def _sync_removed_holding(config: BotConfig, symbol: str) -> None:
+    config.portfolio[:] = [
+        item for item in config.portfolio if item.symbol != symbol
+    ]
+
+
+def _sync_stop_loss(config: BotConfig, symbol: str, stop_loss: float) -> None:
+    for item in config.portfolio:
+        if item.symbol == symbol:
+            item.stop_loss = stop_loss
 
 
 def _holdings_keyboard(config: BotConfig) -> InlineKeyboardMarkup:
@@ -127,6 +189,7 @@ def build_application(
     ownership_service: OwnershipService | None = None,
     screener_service: ScheduledScreenerService | None = None,
     alert_service: AlertService | None = None,
+    portfolio_repo: portfolio_store.PortfolioRepo | None = None,
 ) -> Application:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
@@ -136,6 +199,7 @@ def build_application(
     screener_service = screener_service or ScheduledScreenerService(config)
     # Share the technical service (and its price cache) with the alert engine.
     alert_service = alert_service or AlertService(config, technical_service)
+    portfolio_repo = portfolio_repo or portfolio_store.PortfolioRepo()
     app = Application.builder().token(settings.telegram_bot_token).build()
     notifier = _AdminNotifier(config)
     # Prevents a manual /alerts check and the scheduled job from overlapping.
@@ -311,6 +375,97 @@ def build_application(
         await update.message.reply_text(f"Fetching {symbol}...")
         await _send_detail(update.message, symbol, market)
 
+    async def add_holding(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        args = list(context.args or [])
+        if len(args) < 2 or not args[0].strip():
+            await update.message.reply_text(ADD_USAGE)
+            return
+        symbol = args[0].strip().upper()
+        avg_price = _parse_positive(args[1])
+        if avg_price is None:
+            await update.message.reply_text("AVG_PRICE must be a positive number.")
+            return
+        market: str | None = None
+        stop_loss: float | None = None
+        for extra in args[2:]:
+            token = extra.lower()
+            if token in {"us", "india"}:
+                market = token
+            elif token.startswith("sl="):
+                stop_loss = _parse_positive(token[3:])
+                if stop_loss is None:
+                    await update.message.reply_text("STOP must be a positive number.")
+                    return
+            else:
+                await update.message.reply_text(ADD_USAGE)
+                return
+        market = market or _infer_market(symbol)
+        try:
+            saved = await asyncio.to_thread(
+                portfolio_repo.upsert, symbol, market, avg_price, stop_loss
+            )
+        except Exception:
+            logging.exception("adding holding %s failed", symbol)
+            await update.message.reply_text("Portfolio update failed. See logs.")
+            return
+        _sync_saved_holding(config, saved)
+        stop_text = saved["stop_loss"] if saved["stop_loss"] is not None else "none"
+        await update.message.reply_text(
+            f"Saved {saved['symbol']} ({saved['market']}): "
+            f"avg {saved['avg_price']}, stop {stop_text}, "
+            f"ruleset {saved['ruleset']}"
+        )
+
+    async def remove_holding(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        args = list(context.args or [])
+        if not args or not args[0].strip():
+            await update.message.reply_text(REMOVE_USAGE)
+            return
+        symbol = args[0].strip().upper()
+        try:
+            removed = await asyncio.to_thread(portfolio_repo.remove, symbol)
+        except Exception:
+            logging.exception("removing holding %s failed", symbol)
+            await update.message.reply_text("Portfolio update failed. See logs.")
+            return
+        if not removed:
+            await update.message.reply_text(f"{symbol} is not in the portfolio.")
+            return
+        _sync_removed_holding(config, symbol)
+        await update.message.reply_text(f"Removed {symbol}.")
+
+    async def set_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        args = list(context.args or [])
+        if len(args) < 2 or not args[0].strip():
+            await update.message.reply_text(SETSTOP_USAGE)
+            return
+        symbol = args[0].strip().upper()
+        stop_loss = _parse_positive(args[1])
+        if stop_loss is None:
+            await update.message.reply_text("STOP must be a positive number.")
+            return
+        try:
+            updated = await asyncio.to_thread(
+                portfolio_repo.set_stop, symbol, stop_loss
+            )
+        except Exception:
+            logging.exception("updating stop for %s failed", symbol)
+            await update.message.reply_text("Portfolio update failed. See logs.")
+            return
+        if not updated:
+            await update.message.reply_text(f"{symbol} is not in the portfolio.")
+            return
+        _sync_stop_loss(config, symbol, stop_loss)
+        await update.message.reply_text(f"Stop for {symbol} set to {stop_loss}.")
+
     async def alerts_command(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -384,6 +539,9 @@ def build_application(
     app.add_handler(CommandHandler("run_all", run_all))
     app.add_handler(CommandHandler("check_portfolio", check_portfolio))
     app.add_handler(CommandHandler("stock", stock))
+    app.add_handler(CommandHandler("add", add_holding))
+    app.add_handler(CommandHandler("remove", remove_holding))
+    app.add_handler(CommandHandler("setstop", set_stop))
     app.add_handler(CommandHandler("alerts", alerts_command))
     app.add_handler(
         CallbackQueryHandler(detail_callback, pattern=f"^{CALLBACK_DETAIL}\\|")
