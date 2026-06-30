@@ -10,6 +10,7 @@ from screener_bot.config import (
     PortfolioItem,
     ScheduledScreenerConfig,
     ScreenerCommandConfig,
+    TelegramConfig,
     load_config,
     load_settings,
 )
@@ -138,6 +139,13 @@ def test_env_settings_parses_chat_ids(monkeypatch) -> None:
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_IDS", "1, 2 , 3")
     settings = EnvSettings()
     assert settings.chat_ids() == [1, 2, 3]
+
+
+def test_admin_chat_id_optional(monkeypatch) -> None:
+    assert TelegramConfig(allowed_chat_ids=[1]).admin_chat_id is None
+    assert TelegramConfig(allowed_chat_ids=[1], admin_chat_id=7).admin_chat_id == 7
+    monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_ID", "99")
+    assert EnvSettings().telegram_admin_chat_id == 99
 
 
 def test_load_settings_returns_env_settings() -> None:

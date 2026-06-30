@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import os
 from typing import Literal
 
+from pathlib import Path
+
+import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +17,8 @@ Market = Literal["india", "us"]
 
 class TelegramConfig(BaseModel):
     allowed_chat_ids: list[int] = Field(default_factory=list)
+    # Optional chat that receives short error notes when a scheduled job fails.
+    admin_chat_id: int | None = None
 
 
 class PortfolioItem(BaseModel):
@@ -134,6 +138,42 @@ class AlertsConfig(BaseModel):
         return value
 
 
+class PaperPortfolioConfig(BaseModel):
+    """Configuration for a single named paper portfolio."""
+
+    enabled: bool = True
+    market: Market = "india"
+    strategy: str = "rs_breakout"
+    initial_capital: float = 1_000_000
+    slots: int = 5
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    trailing_stop_pct: float | None = None
+    slippage_bps: float = 10
+    tickers: str | None = None
+
+    @field_validator("strategy")
+    @classmethod
+    def strategy_not_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("slots")
+    @classmethod
+    def positive_slots(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("must be positive")
+        return value
+
+
+class PaperTradingConfig(BaseModel):
+    """Top-level paper trading configuration."""
+
+    portfolios: dict[str, PaperPortfolioConfig] = Field(default_factory=dict)
+
+
 class BotConfig(BaseModel):
     timezone: str = "Asia/Kolkata"
     telegram: TelegramConfig
@@ -146,6 +186,7 @@ class BotConfig(BaseModel):
         default_factory=ScheduledScreenerConfig
     )
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    paper_trading: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
 
     @field_validator("portfolio")
     @classmethod
@@ -158,6 +199,7 @@ class BotConfig(BaseModel):
 class EnvSettings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_allowed_chat_ids: str = ""
+    telegram_admin_chat_id: int | None = None
     turso_database_url: str | None = None
     turso_auth_token: str | None = None
     log_level: str = "INFO"
@@ -167,7 +209,9 @@ class EnvSettings(BaseSettings):
     def chat_ids(self) -> list[int]:
         return [
             int(part)
-            for part in (chunk.strip() for chunk in self.telegram_allowed_chat_ids.split(","))
+            for part in (
+                chunk.strip() for chunk in self.telegram_allowed_chat_ids.split(",")
+            )
             if part
         ]
 
@@ -182,15 +226,49 @@ DEFAULT_SCHEDULED_SCREENER = ScheduledScreenerConfig(
     commands=[
         ScreenerCommandConfig(
             label="India EMA",
-            command=["uv", "run", "screener", "screen", "-m", "india", "-c", "ema", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "screen",
+                "-m",
+                "india",
+                "-c",
+                "ema",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="US EMA",
-            command=["uv", "run", "screener", "screen", "-m", "us", "-c", "ema", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "screen",
+                "-m",
+                "us",
+                "-c",
+                "ema",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="India GARP",
-            command=["uv", "run", "screener", "garp", "-m", "india", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "garp",
+                "-m",
+                "india",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="US GARP",
@@ -198,11 +276,33 @@ DEFAULT_SCHEDULED_SCREENER = ScheduledScreenerConfig(
         ),
         ScreenerCommandConfig(
             label="India Promoter Holding Change",
-            command=["uv", "run", "screener", "promoter-buys", "-m", "india", "--min-change", "0", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "promoter-buys",
+                "-m",
+                "india",
+                "--min-change",
+                "0",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="US Insider Holding Change",
-            command=["uv", "run", "screener", "promoter-buys", "-m", "us", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "promoter-buys",
+                "-m",
+                "us",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
     ],
 )
@@ -254,18 +354,38 @@ def _fetch_portfolio_items() -> list[PortfolioItem]:
     return [PortfolioItem.model_validate(row) for row in rows]
 
 
+def load_paper_trading_config(
+    yaml_path: Path = Path("config/paper_trading.yaml"),
+) -> PaperTradingConfig:
+    """Load paper trading portfolio definitions from YAML."""
+    if not yaml_path.exists():
+        return PaperTradingConfig()
+    raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    portfolios_raw = raw.get("portfolios") or {}
+    portfolios = {
+        name: PaperPortfolioConfig.model_validate(cfg)
+        for name, cfg in portfolios_raw.items()
+    }
+    return PaperTradingConfig(portfolios=portfolios)
+
+
 def load_config(settings: EnvSettings | None = None) -> BotConfig:
     load_dotenv()
     settings = settings or load_settings()
     portfolio = _fetch_portfolio_items()
+    paper_trading = load_paper_trading_config()
     return BotConfig(
         timezone=DEFAULT_TIMEZONE,
-        telegram=TelegramConfig(allowed_chat_ids=settings.chat_ids()),
+        telegram=TelegramConfig(
+            allowed_chat_ids=settings.chat_ids(),
+            admin_chat_id=settings.telegram_admin_chat_id,
+        ),
         portfolio=portfolio,
         rulesets=DEFAULT_RULESETS,
         technical_snapshot=DEFAULT_TECHNICAL_SNAPSHOT,
         scheduled_screener=DEFAULT_SCHEDULED_SCREENER,
         alerts=DEFAULT_ALERTS,
+        paper_trading=paper_trading,
     )
 
 

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from html import escape
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .config import BotConfig
 from .technical import TechnicalService, TechnicalStatus
+
+logger = logging.getLogger(__name__)
 
 # Attention banners prepended to the report when a stop-loss event fires, so a
 # breach is impossible to miss while scrolling. Hit (breached) outranks near.
@@ -76,7 +80,9 @@ class AlertService:
 
         if not sections:
             return None
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        timestamp = datetime.now(ZoneInfo(self.config.timezone)).strftime(
+            "%Y-%m-%d %H:%M"
+        )
         header: list[str] = []
         if stop_hit:
             header += [_STOP_HIT_BANNER, ""]
@@ -150,8 +156,7 @@ class AlertService:
         elif cur["near_stop"] and not old.get("near_stop"):
             gap = (status.close - stop) / stop * 100 if stop else 0.0
             lines.append(
-                f"⚠️ Approaching stop-loss {cur_symbol}{stop:.2f} "
-                f"(+{gap:.1f}% above)"
+                f"⚠️ Approaching stop-loss {cur_symbol}{stop:.2f} (+{gap:.1f}% above)"
             )
 
         if cur["at_high"] and not old.get("at_high"):
@@ -207,9 +212,15 @@ class AlertService:
         }
 
     def _save_state(self, state: dict[str, dict]) -> None:
+        # Write to a temp file and atomically replace so a crash mid-write can
+        # never leave a truncated/corrupt state file behind.
+        tmp_path = self.state_path.with_name(self.state_path.name + ".tmp")
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.state_path.open("w", encoding="utf-8") as fh:
+            with tmp_path.open("w", encoding="utf-8") as fh:
                 json.dump(state, fh, indent=2, sort_keys=True)
-        except OSError:
-            logging.warning("could not persist alert state to %s", self.state_path)
+            os.replace(tmp_path, self.state_path)
+        except OSError as exc:
+            logger.warning(
+                "could not persist alert state to %s: %s", self.state_path, exc
+            )

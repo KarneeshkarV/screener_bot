@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -485,6 +487,45 @@ def test_alerts_command_failure() -> None:
     assert "Alert check failed. See logs." in texts(update.message)
 
 
+def test_alerts_overlap_guard_skips_concurrent_run(caplog) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowAlert(StubAlert):
+        def __init__(self):
+            super().__init__(report=None)
+            self.calls = 0
+
+        def evaluate(self):
+            self.calls += 1
+            started.set()
+            release.wait(timeout=5)
+            return None
+
+    alert = SlowAlert()
+    app = _build(alert=alert)
+
+    async def scenario():
+        first = make_update()
+        task = asyncio.create_task(handler(app, "alerts")(first, make_context()))
+        await asyncio.to_thread(started.wait, 5)  # first run holds the lock
+        second = make_update()
+        await handler(app, "alerts")(second, make_context())
+        release.set()
+        await task
+        return second
+
+    with caplog.at_level(logging.WARNING):
+        second = run(scenario())
+
+    assert alert.calls == 1  # the overlapping run never evaluated
+    assert "Alert check already running." in texts(second.message)
+    assert any(
+        "previous run still in progress" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 # --- detail callback -------------------------------------------------------
 
 
@@ -725,6 +766,72 @@ def test_scheduled_alert_check_handles_failure(monkeypatch) -> None:
     actx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
     run(alert_job.callback(actx))
     actx.bot.send_message.assert_not_awaited()
+
+
+# --- admin error notifications ----------------------------------------------
+
+
+def test_admin_notifier_fires_and_throttles() -> None:
+    config = _config(telegram={"allowed_chat_ids": [1], "admin_chat_id": 777})
+    notifier = botmod._AdminNotifier(config)
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    async def scenario():
+        await notifier.notify(bot, "portfolio-alerts", RuntimeError("boom"))
+        await notifier.notify(bot, "portfolio-alerts", RuntimeError("boom"))
+        await notifier.notify(bot, "scheduled-screener", ValueError("other"))
+
+    run(scenario())
+    # Second portfolio-alerts failure within the hour is throttled; the other
+    # job has its own throttle bucket.
+    assert bot.send_message.await_count == 2
+    first = bot.send_message.await_args_list[0].kwargs
+    assert first["chat_id"] == 777
+    assert "portfolio-alerts" in first["text"]
+    assert "RuntimeError" in first["text"]
+
+
+def test_admin_notifier_unthrottles_after_an_hour(monkeypatch) -> None:
+    now = {"value": 1000.0}
+    monkeypatch.setattr(botmod, "monotonic", lambda: now["value"])
+    config = _config(telegram={"allowed_chat_ids": [1], "admin_chat_id": 777})
+    notifier = botmod._AdminNotifier(config)
+    bot = SimpleNamespace(send_message=AsyncMock())
+    run(notifier.notify(bot, "job", RuntimeError("a")))
+    now["value"] += 3601.0
+    run(notifier.notify(bot, "job", RuntimeError("b")))
+    assert bot.send_message.await_count == 2
+
+
+def test_admin_notifier_noop_without_chat_id() -> None:
+    notifier = botmod._AdminNotifier(_config())
+    bot = SimpleNamespace(send_message=AsyncMock())
+    run(notifier.notify(bot, "job", RuntimeError("boom")))
+    bot.send_message.assert_not_awaited()
+
+
+def test_admin_notifier_send_failure_is_swallowed() -> None:
+    config = _config(telegram={"allowed_chat_ids": [1], "admin_chat_id": 777})
+    notifier = botmod._AdminNotifier(config)
+    bot = SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("down")))
+    run(notifier.notify(bot, "job", RuntimeError("boom")))  # must not raise
+
+
+def test_scheduled_alert_failure_notifies_admin(monkeypatch) -> None:
+    config = _config(telegram={"allowed_chat_ids": [1], "admin_chat_id": 777})
+    app = _build(config=config, alert=StubAlert(raises=True))
+    fake_jq = FakeJobQueue()
+    app._job_queue = fake_jq
+    monkeypatch.setattr(botmod, "_register_commands", AsyncMock())
+    run(app.post_init(app))
+    alert_job = fake_jq.repeating[0]
+    actx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+    run(alert_job.callback(actx))
+    actx.bot.send_message.assert_awaited_once()
+    kwargs = actx.bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 777
+    assert "portfolio-alerts" in kwargs["text"]
+    assert "RuntimeError" in kwargs["text"]
 
 
 def test_scheduled_alert_check_with_no_report(monkeypatch) -> None:
