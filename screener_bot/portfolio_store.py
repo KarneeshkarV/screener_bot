@@ -73,7 +73,9 @@ def ensure_portfolio_table(client: _Client) -> None:
         """
     )
     # Migration: add stop_loss to tables created before the column existed.
-    columns = {str(row[1]) for row in client.execute(f"PRAGMA table_info({TABLE_NAME})").rows}
+    columns = {
+        str(row[1]) for row in client.execute(f"PRAGMA table_info({TABLE_NAME})").rows
+    }
     if "stop_loss" not in columns:
         client.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN stop_loss REAL")
 

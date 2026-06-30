@@ -34,13 +34,11 @@ from .ownership import OwnershipService
 from .paper.engine import PaperTradingEngine
 from .paper.reporting import (
     format_daily_report,
-    format_metrics,
     format_portfolios_list,
     format_portfolio_status,
     format_trades,
     format_weekly_report,
 )
-from .paper.store import PaperStore
 from .scheduled_screener import ScheduledScreenerService, send_screener_report
 from .technical import TechnicalService
 
@@ -133,9 +131,7 @@ def _sync_saved_holding(config: BotConfig, saved: dict) -> None:
 
 
 def _sync_removed_holding(config: BotConfig, symbol: str) -> None:
-    config.portfolio[:] = [
-        item for item in config.portfolio if item.symbol != symbol
-    ]
+    config.portfolio[:] = [item for item in config.portfolio if item.symbol != symbol]
 
 
 def _sync_stop_loss(config: BotConfig, symbol: str, stop_loss: float) -> None:
@@ -583,9 +579,7 @@ def build_application(
                     paper_engine.get_portfolio_status, name
                 )
                 if status is None:
-                    await update.message.reply_text(
-                        f"Portfolio '{name}' not found."
-                    )
+                    await update.message.reply_text(f"Portfolio '{name}' not found.")
                     return
                 report = format_portfolio_status(status)
             else:
@@ -610,9 +604,7 @@ def build_application(
         if not (await _guard(config, update) and update.message):
             return
         try:
-            statuses = await asyncio.to_thread(
-                paper_engine.get_all_portfolios_status
-            )
+            statuses = await asyncio.to_thread(paper_engine.get_all_portfolios_status)
             report = format_portfolios_list(statuses)
         except Exception:
             logging.exception("paper_portfolios failed")
@@ -740,8 +732,12 @@ def build_application(
         CallbackQueryHandler(detail_callback, pattern=f"^{CALLBACK_DETAIL}\\|")
     )
     app.post_init = _post_init(
-        config, screener_service, _scheduled_portfolio_check, _alert_check,
-        notifier, paper_engine,
+        config,
+        screener_service,
+        _scheduled_portfolio_check,
+        _alert_check,
+        notifier,
+        paper_engine,
     )
     return app
 
@@ -869,12 +865,12 @@ def _alerts_status(config: BotConfig) -> str:
 # ---------------------------------------------------------------------------
 
 # Schedule times (IST)
-_INDIA_EVENING_TIME = "16:00"   # India market close
-_US_EVENING_TIME = "02:30"      # US market close (IST)
-_INDIA_MORNING_TIME = "09:20"   # India market open
-_US_MORNING_TIME = "15:00"      # US market open (IST)
+_INDIA_EVENING_TIME = "16:00"  # India market close
+_US_EVENING_TIME = "02:30"  # US market close (IST)
+_INDIA_MORNING_TIME = "09:20"  # India market open
+_US_MORNING_TIME = "15:00"  # US market open (IST)
 _PAPER_DAILY_SUMMARY_TIME = "18:00"
-_PAPER_WEEKLY_SUMMARY_DAY = 6   # Sunday
+_PAPER_WEEKLY_SUMMARY_DAY = 6  # Sunday
 _PAPER_WEEKLY_SUMMARY_TIME = "10:00"
 
 
@@ -893,27 +889,23 @@ def _schedule_paper_trading_jobs(
         return
 
     tz = ZoneInfo(config.timezone)
-    targets = (
-        config.scheduled_screener.chat_ids or config.telegram.allowed_chat_ids
-    )
+    targets = config.scheduled_screener.chat_ids or config.telegram.allowed_chat_ids
 
     # Determine which markets are active
-    markets = {pf.market for pf in config.paper_trading.portfolios.values() if pf.enabled}
+    markets = {
+        pf.market for pf in config.paper_trading.portfolios.values() if pf.enabled
+    }
 
     async def _evening_callback(
         context: ContextTypes.DEFAULT_TYPE, market: str = "india"
     ) -> None:
         try:
             # Run evening signals for portfolios of this market
-            reports = await asyncio.to_thread(
-                paper_engine.run_evening_signals
-            )
+            reports = await asyncio.to_thread(paper_engine.run_evening_signals)
             # Filter to this market's portfolios
             market_reports = [r for r in reports if r.market == market]
             if market_reports:
-                pending_count = sum(
-                    len(r.actions) for r in market_reports
-                )
+                pending_count = sum(len(r.actions) for r in market_reports)
                 if pending_count > 0:
                     summary = (
                         f"📋 Paper Trading ({market.upper()}): "
@@ -931,17 +923,13 @@ def _schedule_paper_trading_jobs(
         except Exception as exc:
             logging.exception("paper evening signals failed for %s", market)
             if notifier:
-                await notifier.notify(
-                    context.bot, f"paper-evening-{market}", exc
-                )
+                await notifier.notify(context.bot, f"paper-evening-{market}", exc)
 
     async def _morning_callback(
         context: ContextTypes.DEFAULT_TYPE, market: str = "india"
     ) -> None:
         try:
-            reports = await asyncio.to_thread(
-                paper_engine.run_morning_fills
-            )
+            reports = await asyncio.to_thread(paper_engine.run_morning_fills)
             market_reports = [r for r in reports if r.market == market]
             if market_reports and any(r.actions for r in market_reports):
                 report_text = format_daily_report(market_reports)
@@ -960,17 +948,13 @@ def _schedule_paper_trading_jobs(
         except Exception as exc:
             logging.exception("paper morning fills failed for %s", market)
             if notifier:
-                await notifier.notify(
-                    context.bot, f"paper-morning-{market}", exc
-                )
+                await notifier.notify(context.bot, f"paper-morning-{market}", exc)
 
     async def _daily_summary_callback(
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         try:
-            statuses = await asyncio.to_thread(
-                paper_engine.get_all_portfolios_status
-            )
+            statuses = await asyncio.to_thread(paper_engine.get_all_portfolios_status)
             if not statuses:
                 return
             report = format_portfolios_list(statuses)
@@ -997,9 +981,7 @@ def _schedule_paper_trading_jobs(
         try:
             from datetime import timedelta
 
-            statuses = await asyncio.to_thread(
-                paper_engine.get_all_portfolios_status
-            )
+            statuses = await asyncio.to_thread(paper_engine.get_all_portfolios_status)
             if not statuses:
                 return
             # Gather trades from the past week
@@ -1010,11 +992,11 @@ def _schedule_paper_trading_jobs(
                     paper_engine._store.fetch_all_trades, pf["id"]
                 )
                 week_ago = (
-                    datetime.now(ZoneInfo(config.timezone)) - timedelta(days=7)
-                ).date().isoformat()
-                recent = [
-                    t for t in all_trades if t["exit_date"] >= week_ago
-                ]
+                    (datetime.now(ZoneInfo(config.timezone)) - timedelta(days=7))
+                    .date()
+                    .isoformat()
+                )
+                recent = [t for t in all_trades if t["exit_date"] >= week_ago]
                 weekly_trades[pf["name"]] = recent
             report = format_weekly_report(statuses, weekly_trades)
             for chat_id in targets:
@@ -1082,10 +1064,12 @@ def _schedule_paper_trading_jobs(
 
     logging.info(
         "paper trading: scheduled %d jobs for markets %s",
-        sum([
-            2 * len(markets),  # evening + morning per market
-            1,  # daily summary
-            1,  # weekly summary
-        ]),
+        sum(
+            [
+                2 * len(markets),  # evening + morning per market
+                1,  # daily summary
+                1,  # weekly summary
+            ]
+        ),
         markets,
     )

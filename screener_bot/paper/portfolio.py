@@ -58,27 +58,35 @@ def compute_stop_price(entry_price: float, stop_loss_pct: float | None) -> float
     return entry_price * (1 - stop_loss_pct)
 
 
-def compute_target_price(entry_price: float, take_profit_pct: float | None) -> float | None:
+def compute_target_price(
+    entry_price: float, take_profit_pct: float | None
+) -> float | None:
     """Compute take-profit price from entry and percentage."""
     if take_profit_pct is None or take_profit_pct <= 0:
         return None
     return entry_price * (1 + take_profit_pct)
 
 
-def compute_trailing_stop(peak_price: float, trailing_stop_pct: float | None) -> float | None:
+def compute_trailing_stop(
+    peak_price: float, trailing_stop_pct: float | None
+) -> float | None:
     """Compute trailing stop from peak price and percentage."""
     if trailing_stop_pct is None or trailing_stop_pct <= 0:
         return None
     return peak_price * (1 - trailing_stop_pct)
 
 
-def check_stop_hit(price: float, entry_price: float, stop_loss_pct: float | None) -> bool:
+def check_stop_hit(
+    price: float, entry_price: float, stop_loss_pct: float | None
+) -> bool:
     """True if price is at or below the stop-loss level."""
     stop = compute_stop_price(entry_price, stop_loss_pct)
     return stop is not None and price <= stop
 
 
-def check_target_hit(price: float, entry_price: float, take_profit_pct: float | None) -> bool:
+def check_target_hit(
+    price: float, entry_price: float, take_profit_pct: float | None
+) -> bool:
     """True if price is at or above the take-profit level."""
     target = compute_target_price(entry_price, take_profit_pct)
     return target is not None and price >= target

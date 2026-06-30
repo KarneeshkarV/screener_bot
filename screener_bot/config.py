@@ -209,7 +209,9 @@ class EnvSettings(BaseSettings):
     def chat_ids(self) -> list[int]:
         return [
             int(part)
-            for part in (chunk.strip() for chunk in self.telegram_allowed_chat_ids.split(","))
+            for part in (
+                chunk.strip() for chunk in self.telegram_allowed_chat_ids.split(",")
+            )
             if part
         ]
 
@@ -224,15 +226,49 @@ DEFAULT_SCHEDULED_SCREENER = ScheduledScreenerConfig(
     commands=[
         ScreenerCommandConfig(
             label="India EMA",
-            command=["uv", "run", "screener", "screen", "-m", "india", "-c", "ema", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "screen",
+                "-m",
+                "india",
+                "-c",
+                "ema",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="US EMA",
-            command=["uv", "run", "screener", "screen", "-m", "us", "-c", "ema", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "screen",
+                "-m",
+                "us",
+                "-c",
+                "ema",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="India GARP",
-            command=["uv", "run", "screener", "garp", "-m", "india", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "garp",
+                "-m",
+                "india",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="US GARP",
@@ -240,11 +276,33 @@ DEFAULT_SCHEDULED_SCREENER = ScheduledScreenerConfig(
         ),
         ScreenerCommandConfig(
             label="India Promoter Holding Change",
-            command=["uv", "run", "screener", "promoter-buys", "-m", "india", "--min-change", "0", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "promoter-buys",
+                "-m",
+                "india",
+                "--min-change",
+                "0",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
         ScreenerCommandConfig(
             label="US Insider Holding Change",
-            command=["uv", "run", "screener", "promoter-buys", "-m", "us", "-n", "30", "--csv"],
+            command=[
+                "uv",
+                "run",
+                "screener",
+                "promoter-buys",
+                "-m",
+                "us",
+                "-n",
+                "30",
+                "--csv",
+            ],
         ),
     ],
 )

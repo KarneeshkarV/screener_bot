@@ -152,9 +152,7 @@ def format_portfolio_status(status: dict) -> str:
                 lines.append(f"  {ticker}  entry {cur}{entry_px:.2f}  ({days}d)")
 
         unrealized = status["total_unrealized_pnl"]
-        lines.append(
-            f"\nUnrealized P&L: {_fmt_money(unrealized, market)}"
-        )
+        lines.append(f"\nUnrealized P&L: {_fmt_money(unrealized, market)}")
     else:
         lines.append("No open positions.")
 
@@ -212,7 +210,6 @@ def format_metrics(metrics: dict, portfolio_name: str, market: str) -> str:
     if not metrics or metrics.get("trade_count", 0) == 0:
         return f"📊 <b>{escape(portfolio_name)}</b> — No trades for metrics."
 
-    cur = _currency(market)
     lines = [
         f"📊 <b>Performance — {escape(portfolio_name)}</b>",
         "",
@@ -229,7 +226,9 @@ def format_metrics(metrics: dict, portfolio_name: str, market: str) -> str:
     return "\n".join(lines)
 
 
-def format_weekly_report(statuses: list[dict], weekly_trades: dict[str, list[dict]]) -> str:
+def format_weekly_report(
+    statuses: list[dict], weekly_trades: dict[str, list[dict]]
+) -> str:
     """Format the weekly paper trading summary."""
     from datetime import date, timedelta
 
@@ -250,21 +249,17 @@ def format_weekly_report(statuses: list[dict], weekly_trades: dict[str, list[dic
 
         trades = weekly_trades.get(name, [])
         week_pnl = sum(t["pnl"] for t in trades)
-        week_return = (week_pnl / pf["initial_capital"]) * 100 if pf["initial_capital"] > 0 else 0
+        week_return = (
+            (week_pnl / pf["initial_capital"]) * 100 if pf["initial_capital"] > 0 else 0
+        )
         total_return = status["total_return_pct"]
 
-        buys = [t for t in trades if t.get("exit_reason") == "entry_signal"]
-        sells = [t for t in trades]
         winners = [t for t in trades if t["pnl"] > 0]
         win_rate = (len(winners) / len(trades) * 100) if trades else 0
 
         lines.append(f"━━━ {market_flag} <b>{escape(name)}</b> ━━━")
-        lines.append(
-            f"Week: {_fmt_pct(week_return)} | Total: {_fmt_pct(total_return)}"
-        )
-        lines.append(
-            f"Trades: {len(trades)} | Win rate: {win_rate:.0f}%"
-        )
+        lines.append(f"Week: {_fmt_pct(week_return)} | Total: {_fmt_pct(total_return)}")
+        lines.append(f"Trades: {len(trades)} | Win rate: {win_rate:.0f}%")
 
         if trades:
             best = max(trades, key=lambda t: t["return_pct"])

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 
 from screener_bot.paper.engine import DailyReport
 from screener_bot.paper.portfolio import TradeAction

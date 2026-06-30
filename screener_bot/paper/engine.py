@@ -141,7 +141,10 @@ class PaperTradingEngine:
                 sell_count += 1
                 logger.info(
                     "paper[%s] pending SELL %s reason=%s close=%.2f",
-                    pf["name"], ticker, result.exit_reason, result.close,
+                    pf["name"],
+                    ticker,
+                    result.exit_reason,
+                    result.close,
                 )
         return sell_count
 
@@ -179,16 +182,16 @@ class PaperTradingEngine:
                 )
                 logger.info(
                     "paper[%s] pending BUY %s close=%.2f",
-                    pf["name"], ticker, signal_price,
+                    pf["name"],
+                    ticker,
+                    signal_price,
                 )
 
     # ------------------------------------------------------------------
     # Phase 2 — Morning fill execution
     # ------------------------------------------------------------------
 
-    def run_morning_fills(
-        self, portfolio_name: str | None = None
-    ) -> list[DailyReport]:
+    def run_morning_fills(self, portfolio_name: str | None = None) -> list[DailyReport]:
         """Fill pending orders at today's open prices."""
         reports: list[DailyReport] = []
         for pf in self._get_target_portfolios(portfolio_name):
@@ -225,9 +228,10 @@ class PaperTradingEngine:
                 continue
             action = self._fill_sell(pf, order, positions, open_prices, cash)
             if action:
-                cash += compute_fill_price(
-                    action.price, "sell", pf["slippage_bps"]
-                ) * action.shares
+                cash += (
+                    compute_fill_price(action.price, "sell", pf["slippage_bps"])
+                    * action.shares
+                )
                 report.actions.append(action)
                 # Refresh positions after each sell
                 positions = self._store.fetch_positions(portfolio_id)
@@ -241,9 +245,10 @@ class PaperTradingEngine:
 
             action = self._fill_buy(pf, order, positions, open_prices, cash)
             if action:
-                cost = compute_fill_price(
-                    action.price, "buy", pf["slippage_bps"]
-                ) * action.shares
+                cost = (
+                    compute_fill_price(action.price, "buy", pf["slippage_bps"])
+                    * action.shares
+                )
                 cash -= cost
                 report.actions.append(action)
                 positions = self._store.fetch_positions(portfolio_id)
@@ -274,7 +279,9 @@ class PaperTradingEngine:
         ticker = order["ticker"]
         open_px = open_prices.get(ticker)
         if open_px is None:
-            logger.warning("paper[%s] no open price for %s, skipping sell", pf["name"], ticker)
+            logger.warning(
+                "paper[%s] no open price for %s, skipping sell", pf["name"], ticker
+            )
             return None
 
         pos = next((p for p in positions if p["ticker"] == ticker), None)
@@ -303,7 +310,12 @@ class PaperTradingEngine:
 
         logger.info(
             "paper[%s] SELL %s @ %.2f pnl=%.2f (%.2f%%) reason=%s",
-            pf["name"], ticker, open_px, pnl_abs, ret_pct * 100, order["reason"],
+            pf["name"],
+            ticker,
+            open_px,
+            pnl_abs,
+            ret_pct * 100,
+            order["reason"],
         )
         return TradeAction(
             portfolio_name=pf["name"],
@@ -328,7 +340,9 @@ class PaperTradingEngine:
         ticker = order["ticker"]
         open_px = open_prices.get(ticker)
         if open_px is None:
-            logger.warning("paper[%s] no open price for %s, skipping buy", pf["name"], ticker)
+            logger.warning(
+                "paper[%s] no open price for %s, skipping buy", pf["name"], ticker
+            )
             return None
 
         slot_cap = compute_slot_capital(cash, pf["slots"], len(positions))
@@ -356,7 +370,11 @@ class PaperTradingEngine:
 
         logger.info(
             "paper[%s] BUY %s @ %.2f shares=%.2f cost=%.2f",
-            pf["name"], ticker, open_px, shares, cost,
+            pf["name"],
+            ticker,
+            open_px,
+            shares,
+            cost,
         )
         return TradeAction(
             portfolio_name=pf["name"],
@@ -421,7 +439,11 @@ class PaperTradingEngine:
 
             logger.info(
                 "paper[%s] GAP-STOP %s @ %.2f reason=%s pnl=%.2f",
-                pf["name"], ticker, open_px, reason, pnl_abs,
+                pf["name"],
+                ticker,
+                open_px,
+                reason,
+                pnl_abs,
             )
             report.actions.append(
                 TradeAction(

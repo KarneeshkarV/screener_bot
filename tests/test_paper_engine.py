@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from screener_bot.paper.engine import DailyReport, PaperTradingEngine
-from screener_bot.paper.portfolio import TradeAction
+from screener_bot.paper.engine import PaperTradingEngine
 from screener_bot.paper.signals import ScanResult, SignalResult
 
 
@@ -95,7 +94,9 @@ class TestEveningSignals:
 
         signals.check_exit_signals.return_value = {
             "TCS": SignalResult(
-                ticker="TCS", exit_signal=True, close=3200.0,
+                ticker="TCS",
+                exit_signal=True,
+                close=3200.0,
                 exit_reason="stop",
             ),
         }
@@ -132,9 +133,13 @@ class TestMorningFills:
         store.fetch_positions.return_value = []
         store.fetch_pending_orders.return_value = [
             {
-                "id": 1, "portfolio_id": 1, "ticker": "RELIANCE",
-                "side": "buy", "reason": "entry_signal",
-                "signal_price": 2800.0, "signal_date": "2024-06-01",
+                "id": 1,
+                "portfolio_id": 1,
+                "ticker": "RELIANCE",
+                "side": "buy",
+                "reason": "entry_signal",
+                "signal_price": 2800.0,
+                "signal_date": "2024-06-01",
             },
         ]
         store.insert_position.return_value = _make_position(

@@ -193,7 +193,11 @@ class SignalService:
             bars = bars.sort_index()
             try:
                 signal_series = evaluate(entry_ast, bars)
-                last_signal = signal_series.dropna().iloc[-1] if not signal_series.dropna().empty else False
+                last_signal = (
+                    signal_series.dropna().iloc[-1]
+                    if not signal_series.dropna().empty
+                    else False
+                )
                 if bool(last_signal):
                     close = float(bars["close"].dropna().iloc[-1])
                     candidates.append(tv_sym)
@@ -290,7 +294,11 @@ class SignalService:
             elif exit_ast is not None:
                 try:
                     exit_series = evaluate(exit_ast, bars)
-                    last = exit_series.dropna().iloc[-1] if not exit_series.dropna().empty else False
+                    last = (
+                        exit_series.dropna().iloc[-1]
+                        if not exit_series.dropna().empty
+                        else False
+                    )
                     if bool(last):
                         result.exit_signal = True
                         result.exit_reason = "exit_signal"

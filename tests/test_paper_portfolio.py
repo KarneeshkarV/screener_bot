@@ -190,17 +190,27 @@ class TestDaysBetween:
 class TestTradeAction:
     def test_buy_action(self) -> None:
         a = TradeAction(
-            portfolio_name="test", ticker="AAPL", side="buy",
-            price=150.0, shares=10, reason="entry_signal",
+            portfolio_name="test",
+            ticker="AAPL",
+            side="buy",
+            price=150.0,
+            shares=10,
+            reason="entry_signal",
         )
         assert a.pnl is None
         assert a.return_pct is None
 
     def test_sell_action(self) -> None:
         a = TradeAction(
-            portfolio_name="test", ticker="AAPL", side="sell",
-            price=160.0, shares=10, reason="stop",
-            pnl=95.0, return_pct=0.063, days_held=12,
+            portfolio_name="test",
+            ticker="AAPL",
+            side="sell",
+            price=160.0,
+            shares=10,
+            reason="stop",
+            pnl=95.0,
+            return_pct=0.063,
+            days_held=12,
         )
         assert a.pnl == 95.0
         assert a.days_held == 12

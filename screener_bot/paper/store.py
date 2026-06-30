@@ -143,9 +143,7 @@ def _position_row(row: tuple) -> dict[str, Any]:
     }
 
 
-_POSITION_COLS = (
-    "id, portfolio_id, ticker, entry_date, entry_price, shares, slot_capital, peak_price"
-)
+_POSITION_COLS = "id, portfolio_id, ticker, entry_date, entry_price, shares, slot_capital, peak_price"
 
 
 def _pending_row(row: tuple) -> dict[str, Any]:
@@ -160,9 +158,7 @@ def _pending_row(row: tuple) -> dict[str, Any]:
     }
 
 
-_PENDING_COLS = (
-    "id, portfolio_id, ticker, side, reason, signal_price, signal_date"
-)
+_PENDING_COLS = "id, portfolio_id, ticker, side, reason, signal_price, signal_date"
 
 
 def _trade_row(row: tuple) -> dict[str, Any]:
@@ -232,9 +228,18 @@ def upsert_portfolio(
             tickers = excluded.tickers
         """,
         [
-            name, market, strategy, int(enabled), initial_capital, cash,
-            slots, stop_loss_pct, take_profit_pct, trailing_stop_pct,
-            slippage_bps, tickers,
+            name,
+            market,
+            strategy,
+            int(enabled),
+            initial_capital,
+            cash,
+            slots,
+            stop_loss_pct,
+            take_profit_pct,
+            trailing_stop_pct,
+            slippage_bps,
+            tickers,
         ],
     )
     rows = client.execute(
@@ -296,9 +301,7 @@ def reset_portfolio(client: _Client, portfolio_id: int, initial_capital: float) 
     client.execute(
         f"DELETE FROM {_PENDING_TABLE} WHERE portfolio_id = ?", [portfolio_id]
     )
-    client.execute(
-        f"DELETE FROM {_TRADE_TABLE} WHERE portfolio_id = ?", [portfolio_id]
-    )
+    client.execute(f"DELETE FROM {_TRADE_TABLE} WHERE portfolio_id = ?", [portfolio_id])
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +336,15 @@ def insert_position(
             (portfolio_id, ticker, entry_date, entry_price, shares, slot_capital, peak_price)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        [portfolio_id, ticker, entry_date, entry_price, shares, slot_capital, peak_price],
+        [
+            portfolio_id,
+            ticker,
+            entry_date,
+            entry_price,
+            shares,
+            slot_capital,
+            peak_price,
+        ],
     )
     rows = client.execute(
         f"SELECT {_POSITION_COLS} FROM {_POSITION_TABLE} "
@@ -456,8 +467,17 @@ def insert_trade(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            portfolio_id, ticker, entry_date, entry_price, exit_date, exit_price,
-            shares, pnl, return_pct, exit_reason, days_held,
+            portfolio_id,
+            ticker,
+            entry_date,
+            entry_price,
+            exit_date,
+            exit_price,
+            shares,
+            pnl,
+            return_pct,
+            exit_reason,
+            days_held,
         ],
     )
     rows = client.execute(
@@ -483,8 +503,7 @@ def fetch_trades(
 def fetch_all_trades(client: _Client, portfolio_id: int) -> list[dict[str, Any]]:
     ensure_paper_tables(client)
     rows = client.execute(
-        f"SELECT {_TRADE_COLS} FROM {_TRADE_TABLE} "
-        "WHERE portfolio_id = ? ORDER BY id",
+        f"SELECT {_TRADE_COLS} FROM {_TRADE_TABLE} WHERE portfolio_id = ? ORDER BY id",
         [portfolio_id],
     ).rows
     return [_trade_row(r) for r in rows]

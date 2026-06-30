@@ -156,8 +156,7 @@ class AlertService:
         elif cur["near_stop"] and not old.get("near_stop"):
             gap = (status.close - stop) / stop * 100 if stop else 0.0
             lines.append(
-                f"⚠️ Approaching stop-loss {cur_symbol}{stop:.2f} "
-                f"(+{gap:.1f}% above)"
+                f"⚠️ Approaching stop-loss {cur_symbol}{stop:.2f} (+{gap:.1f}% above)"
             )
 
         if cur["at_high"] and not old.get("at_high"):

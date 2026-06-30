@@ -163,8 +163,7 @@ def test_check_portfolio_parallel_india_fetches_resolve_all() -> None:
         )
 
     items = [
-        PortfolioItem(symbol=f"NSE:S{i}", market="india", ruleset="x")
-        for i in range(4)
+        PortfolioItem(symbol=f"NSE:S{i}", market="india", ruleset="x") for i in range(4)
     ]
     out = OwnershipService(india_fetcher=stub_fetcher).check_portfolio(items)
     assert list(out) == [item.symbol for item in items]

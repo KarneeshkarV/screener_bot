@@ -77,7 +77,9 @@ class StubRepo:
         self.remove_calls: list[str] = []
         self.set_stop_calls: list[tuple] = []
 
-    def upsert(self, symbol, market, avg_price, stop_loss=None, ruleset="swing_momentum"):
+    def upsert(
+        self, symbol, market, avg_price, stop_loss=None, ruleset="swing_momentum"
+    ):
         if self.raises:
             raise RuntimeError("boom")
         self.upsert_calls.append((symbol, market, avg_price, stop_loss, ruleset))
