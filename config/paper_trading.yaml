@@ -1,0 +1,27 @@
+# Paper Trading Configuration
+# Each portfolio runs independently with its own strategy, market, and risk params.
+# Set enabled: false to pause a portfolio without deleting its state.
+
+portfolios:
+  india-momentum:
+    enabled: true
+    market: india
+    strategy: rs_breakout
+    initial_capital: 1000000    # ₹10,00,000
+    slots: 5
+    stop_loss_pct: 0.08         # 8% stop-loss
+    take_profit_pct: 0.15       # 15% take-profit
+    trailing_stop_pct: 0.10     # 10% trailing stop
+    slippage_bps: 10
+    # tickers: null → uses strategy's default universe (TradingView top-500 by volume)
+
+  us-aggressive:
+    enabled: true
+    market: us
+    strategy: rs_breakout
+    initial_capital: 100000     # $100,000
+    slots: 10
+    stop_loss_pct: 0.05
+    trailing_stop_pct: 0.08
+    slippage_bps: 5
+    # tickers: AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,AMD,AVGO,CRM

@@ -17,6 +17,7 @@ def test_main_loads_config_and_runs_polling(monkeypatch) -> None:
     monkeypatch.setattr(m, "load_settings", lambda: settings)
     monkeypatch.setattr(m, "load_config", fake_load_config)
     monkeypatch.setattr(m, "_seed_portfolio_from_yaml", lambda _path: None)
+    monkeypatch.setattr(m, "_seed_paper_portfolios", lambda _cfg: None)
 
     app = MagicMock()
 
@@ -40,6 +41,7 @@ def test_main_falls_back_to_info_for_bad_log_level(monkeypatch) -> None:
     monkeypatch.setattr(m, "load_settings", lambda: settings)
     monkeypatch.setattr(m, "load_config", lambda s: "CONFIG")
     monkeypatch.setattr(m, "_seed_portfolio_from_yaml", lambda _path: None)
+    monkeypatch.setattr(m, "_seed_paper_portfolios", lambda _cfg: None)
     app = MagicMock()
     monkeypatch.setattr(m, "build_application", lambda s, c: app)
 

@@ -31,6 +31,16 @@ from .formatting import (
     split_messages,
 )
 from .ownership import OwnershipService
+from .paper.engine import PaperTradingEngine
+from .paper.reporting import (
+    format_daily_report,
+    format_metrics,
+    format_portfolios_list,
+    format_portfolio_status,
+    format_trades,
+    format_weekly_report,
+)
+from .paper.store import PaperStore
 from .scheduled_screener import ScheduledScreenerService, send_screener_report
 from .technical import TechnicalService
 
@@ -47,6 +57,12 @@ HELP_TEXT = (
     "/remove SYMBOL - remove a holding\n"
     "/setstop SYMBOL STOP - update a holding's stop-loss\n"
     "/alerts - check holdings for changes now\n"
+    "/paper_status [name] - paper portfolio status\n"
+    "/paper_portfolios - list all paper portfolios\n"
+    "/paper_trades [name] - recent paper trades\n"
+    "/paper_enable name - enable a paper portfolio\n"
+    "/paper_disable name - disable a paper portfolio\n"
+    "/paper_reset name - reset a paper portfolio\n"
     "/status - show bot status\n"
     "/help - show this help"
 )
@@ -72,6 +88,12 @@ BOT_COMMANDS = [
     BotCommand("remove", "Remove a holding"),
     BotCommand("setstop", "Update a holding's stop-loss"),
     BotCommand("alerts", "Check holdings for changes now"),
+    BotCommand("paper_status", "Paper portfolio status"),
+    BotCommand("paper_portfolios", "List all paper portfolios"),
+    BotCommand("paper_trades", "Recent paper trades"),
+    BotCommand("paper_enable", "Enable a paper portfolio"),
+    BotCommand("paper_disable", "Disable a paper portfolio"),
+    BotCommand("paper_reset", "Reset a paper portfolio"),
 ]
 
 
@@ -190,6 +212,7 @@ def build_application(
     screener_service: ScheduledScreenerService | None = None,
     alert_service: AlertService | None = None,
     portfolio_repo: portfolio_store.PortfolioRepo | None = None,
+    paper_engine: PaperTradingEngine | None = None,
 ) -> Application:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
@@ -200,6 +223,7 @@ def build_application(
     # Share the technical service (and its price cache) with the alert engine.
     alert_service = alert_service or AlertService(config, technical_service)
     portfolio_repo = portfolio_repo or portfolio_store.PortfolioRepo()
+    paper_engine = paper_engine or PaperTradingEngine()
     app = Application.builder().token(settings.telegram_bot_token).build()
     notifier = _AdminNotifier(config)
     # Prevents a manual /alerts check and the scheduled job from overlapping.
@@ -543,11 +567,181 @@ def build_application(
     app.add_handler(CommandHandler("remove", remove_holding))
     app.add_handler(CommandHandler("setstop", set_stop))
     app.add_handler(CommandHandler("alerts", alerts_command))
+
+    # -- Paper Trading Command Handlers --
+
+    async def paper_status_cmd(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        name = context.args[0] if context.args else None
+        await update.message.reply_text("Fetching paper status...")
+        try:
+            if name:
+                status = await asyncio.to_thread(
+                    paper_engine.get_portfolio_status, name
+                )
+                if status is None:
+                    await update.message.reply_text(
+                        f"Portfolio '{name}' not found."
+                    )
+                    return
+                report = format_portfolio_status(status)
+            else:
+                statuses = await asyncio.to_thread(
+                    paper_engine.get_all_portfolios_status
+                )
+                if not statuses:
+                    await update.message.reply_text("No paper portfolios configured.")
+                    return
+                parts = [format_portfolio_status(s) for s in statuses]
+                report = "\n\n".join(parts)
+        except Exception:
+            logging.exception("paper_status failed")
+            await update.message.reply_text("Paper status check failed.")
+            return
+        for msg in split_messages(report):
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    async def paper_portfolios_cmd(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        try:
+            statuses = await asyncio.to_thread(
+                paper_engine.get_all_portfolios_status
+            )
+            report = format_portfolios_list(statuses)
+        except Exception:
+            logging.exception("paper_portfolios failed")
+            await update.message.reply_text("Failed to list paper portfolios.")
+            return
+        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
+
+    async def paper_trades_cmd(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /paper_trades PORTFOLIO_NAME [LIMIT]"
+            )
+            return
+        name = context.args[0]
+        limit = 10
+        if len(context.args) > 1:
+            try:
+                limit = int(context.args[1])
+            except ValueError:
+                pass
+        try:
+            pf = await asyncio.to_thread(
+                paper_engine._store.fetch_portfolio_by_name, name
+            )
+            if pf is None:
+                await update.message.reply_text(f"Portfolio '{name}' not found.")
+                return
+            trades = await asyncio.to_thread(
+                paper_engine._store.fetch_trades, pf["id"], limit
+            )
+            report = format_trades(trades, name, pf["market"])
+        except Exception:
+            logging.exception("paper_trades failed")
+            await update.message.reply_text("Failed to fetch trades.")
+            return
+        for msg in split_messages(report):
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    async def paper_enable_cmd(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /paper_enable PORTFOLIO_NAME")
+            return
+        name = context.args[0]
+        try:
+            updated = await asyncio.to_thread(
+                paper_engine._store.update_portfolio_enabled, name, True
+            )
+        except Exception:
+            logging.exception("paper_enable failed")
+            await update.message.reply_text("Failed to enable portfolio.")
+            return
+        if updated:
+            await update.message.reply_text(f"✅ Paper portfolio '{name}' enabled.")
+        else:
+            await update.message.reply_text(f"Portfolio '{name}' not found.")
+
+    async def paper_disable_cmd(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /paper_disable PORTFOLIO_NAME")
+            return
+        name = context.args[0]
+        try:
+            updated = await asyncio.to_thread(
+                paper_engine._store.update_portfolio_enabled, name, False
+            )
+        except Exception:
+            logging.exception("paper_disable failed")
+            await update.message.reply_text("Failed to disable portfolio.")
+            return
+        if updated:
+            await update.message.reply_text(f"❌ Paper portfolio '{name}' disabled.")
+        else:
+            await update.message.reply_text(f"Portfolio '{name}' not found.")
+
+    async def paper_reset_cmd(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not (await _guard(config, update) and update.message):
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /paper_reset PORTFOLIO_NAME")
+            return
+        name = context.args[0]
+        try:
+            pf = await asyncio.to_thread(
+                paper_engine._store.fetch_portfolio_by_name, name
+            )
+            if pf is None:
+                await update.message.reply_text(f"Portfolio '{name}' not found.")
+                return
+            await asyncio.to_thread(
+                paper_engine._store.reset_portfolio,
+                pf["id"],
+                pf["initial_capital"],
+            )
+        except Exception:
+            logging.exception("paper_reset failed")
+            await update.message.reply_text("Failed to reset portfolio.")
+            return
+        await update.message.reply_text(
+            f"🔄 Paper portfolio '{name}' reset to "
+            f"initial capital {pf['initial_capital']:,.0f}."
+        )
+
+    app.add_handler(CommandHandler("paper_status", paper_status_cmd))
+    app.add_handler(CommandHandler("paper_portfolios", paper_portfolios_cmd))
+    app.add_handler(CommandHandler("paper_trades", paper_trades_cmd))
+    app.add_handler(CommandHandler("paper_enable", paper_enable_cmd))
+    app.add_handler(CommandHandler("paper_disable", paper_disable_cmd))
+    app.add_handler(CommandHandler("paper_reset", paper_reset_cmd))
+
     app.add_handler(
         CallbackQueryHandler(detail_callback, pattern=f"^{CALLBACK_DETAIL}\\|")
     )
     app.post_init = _post_init(
-        config, screener_service, _scheduled_portfolio_check, _alert_check, notifier
+        config, screener_service, _scheduled_portfolio_check, _alert_check,
+        notifier, paper_engine,
     )
     return app
 
@@ -562,12 +756,15 @@ def _post_init(
     portfolio_callback,
     alert_callback,
     notifier: _AdminNotifier | None = None,
+    paper_engine: PaperTradingEngine | None = None,
 ):
     async def post_init(app: Application) -> None:
         await _register_commands(app)
         _schedule_screener_jobs(app, config, screener_service, notifier)
         _schedule_portfolio_jobs(app, config, portfolio_callback)
         _schedule_alert_jobs(app, config, alert_callback)
+        if paper_engine is not None:
+            _schedule_paper_trading_jobs(app, config, paper_engine, notifier)
 
     return post_init
 
@@ -665,3 +862,230 @@ def _alerts_status(config: BotConfig) -> str:
     if not alerts.enabled:
         return "disabled"
     return f"enabled, every {alerts.interval_minutes}m"
+
+
+# ---------------------------------------------------------------------------
+# Paper Trading Scheduled Jobs
+# ---------------------------------------------------------------------------
+
+# Schedule times (IST)
+_INDIA_EVENING_TIME = "16:00"   # India market close
+_US_EVENING_TIME = "02:30"      # US market close (IST)
+_INDIA_MORNING_TIME = "09:20"   # India market open
+_US_MORNING_TIME = "15:00"      # US market open (IST)
+_PAPER_DAILY_SUMMARY_TIME = "18:00"
+_PAPER_WEEKLY_SUMMARY_DAY = 6   # Sunday
+_PAPER_WEEKLY_SUMMARY_TIME = "10:00"
+
+
+def _schedule_paper_trading_jobs(
+    app: Application,
+    config: BotConfig,
+    paper_engine: PaperTradingEngine,
+    notifier: _AdminNotifier | None = None,
+) -> None:
+    """Register all paper trading scheduled jobs."""
+    if not config.paper_trading.portfolios:
+        logging.info("paper trading: no portfolios configured, skipping scheduling")
+        return
+    if app.job_queue is None:
+        logging.warning("paper trading disabled: application has no job queue")
+        return
+
+    tz = ZoneInfo(config.timezone)
+    targets = (
+        config.scheduled_screener.chat_ids or config.telegram.allowed_chat_ids
+    )
+
+    # Determine which markets are active
+    markets = {pf.market for pf in config.paper_trading.portfolios.values() if pf.enabled}
+
+    async def _evening_callback(
+        context: ContextTypes.DEFAULT_TYPE, market: str = "india"
+    ) -> None:
+        try:
+            # Run evening signals for portfolios of this market
+            reports = await asyncio.to_thread(
+                paper_engine.run_evening_signals
+            )
+            # Filter to this market's portfolios
+            market_reports = [r for r in reports if r.market == market]
+            if market_reports:
+                pending_count = sum(
+                    len(r.actions) for r in market_reports
+                )
+                if pending_count > 0:
+                    summary = (
+                        f"📋 Paper Trading ({market.upper()}): "
+                        f"{pending_count} pending orders created for tomorrow's fill."
+                    )
+                    for chat_id in targets:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=chat_id, text=summary
+                            )
+                        except Exception:
+                            logging.exception(
+                                "failed to send paper evening summary to %s", chat_id
+                            )
+        except Exception as exc:
+            logging.exception("paper evening signals failed for %s", market)
+            if notifier:
+                await notifier.notify(
+                    context.bot, f"paper-evening-{market}", exc
+                )
+
+    async def _morning_callback(
+        context: ContextTypes.DEFAULT_TYPE, market: str = "india"
+    ) -> None:
+        try:
+            reports = await asyncio.to_thread(
+                paper_engine.run_morning_fills
+            )
+            market_reports = [r for r in reports if r.market == market]
+            if market_reports and any(r.actions for r in market_reports):
+                report_text = format_daily_report(market_reports)
+                for chat_id in targets:
+                    for msg in split_messages(report_text):
+                        try:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=msg,
+                                parse_mode=ParseMode.HTML,
+                            )
+                        except Exception:
+                            logging.exception(
+                                "failed to send paper morning report to %s", chat_id
+                            )
+        except Exception as exc:
+            logging.exception("paper morning fills failed for %s", market)
+            if notifier:
+                await notifier.notify(
+                    context.bot, f"paper-morning-{market}", exc
+                )
+
+    async def _daily_summary_callback(
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        try:
+            statuses = await asyncio.to_thread(
+                paper_engine.get_all_portfolios_status
+            )
+            if not statuses:
+                return
+            report = format_portfolios_list(statuses)
+            for chat_id in targets:
+                for msg in split_messages(report):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=msg,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        logging.exception(
+                            "failed to send paper daily summary to %s", chat_id
+                        )
+        except Exception as exc:
+            logging.exception("paper daily summary failed")
+            if notifier:
+                await notifier.notify(context.bot, "paper-daily-summary", exc)
+
+    async def _weekly_summary_callback(
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        try:
+            from datetime import timedelta
+
+            statuses = await asyncio.to_thread(
+                paper_engine.get_all_portfolios_status
+            )
+            if not statuses:
+                return
+            # Gather trades from the past week
+            weekly_trades: dict[str, list[dict]] = {}
+            for status in statuses:
+                pf = status["portfolio"]
+                all_trades = await asyncio.to_thread(
+                    paper_engine._store.fetch_all_trades, pf["id"]
+                )
+                week_ago = (
+                    datetime.now(ZoneInfo(config.timezone)) - timedelta(days=7)
+                ).date().isoformat()
+                recent = [
+                    t for t in all_trades if t["exit_date"] >= week_ago
+                ]
+                weekly_trades[pf["name"]] = recent
+            report = format_weekly_report(statuses, weekly_trades)
+            for chat_id in targets:
+                for msg in split_messages(report):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=msg,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        logging.exception(
+                            "failed to send paper weekly summary to %s", chat_id
+                        )
+        except Exception as exc:
+            logging.exception("paper weekly summary failed")
+            if notifier:
+                await notifier.notify(context.bot, "paper-weekly-summary", exc)
+
+    # Schedule evening signal evaluation
+    if "india" in markets:
+        h, m = (int(p) for p in _INDIA_EVENING_TIME.split(":"))
+        app.job_queue.run_daily(
+            lambda ctx: asyncio.ensure_future(_evening_callback(ctx, "india")),
+            time=time(hour=h, minute=m, tzinfo=tz),
+            name="paper-evening-india",
+        )
+        h, m = (int(p) for p in _INDIA_MORNING_TIME.split(":"))
+        app.job_queue.run_daily(
+            lambda ctx: asyncio.ensure_future(_morning_callback(ctx, "india")),
+            time=time(hour=h, minute=m, tzinfo=tz),
+            name="paper-morning-india",
+        )
+
+    if "us" in markets:
+        h, m = (int(p) for p in _US_EVENING_TIME.split(":"))
+        app.job_queue.run_daily(
+            lambda ctx: asyncio.ensure_future(_evening_callback(ctx, "us")),
+            time=time(hour=h, minute=m, tzinfo=tz),
+            name="paper-evening-us",
+        )
+        h, m = (int(p) for p in _US_MORNING_TIME.split(":"))
+        app.job_queue.run_daily(
+            lambda ctx: asyncio.ensure_future(_morning_callback(ctx, "us")),
+            time=time(hour=h, minute=m, tzinfo=tz),
+            name="paper-morning-us",
+        )
+
+    # Daily summary
+    h, m = (int(p) for p in _PAPER_DAILY_SUMMARY_TIME.split(":"))
+    app.job_queue.run_daily(
+        _daily_summary_callback,
+        time=time(hour=h, minute=m, tzinfo=tz),
+        name="paper-daily-summary",
+    )
+
+    # Weekly summary (Sunday)
+    h, m = (int(p) for p in _PAPER_WEEKLY_SUMMARY_TIME.split(":"))
+    app.job_queue.run_daily(
+        _weekly_summary_callback,
+        time=time(hour=h, minute=m, tzinfo=tz),
+        days=(_PAPER_WEEKLY_SUMMARY_DAY,),
+        name="paper-weekly-summary",
+    )
+
+    logging.info(
+        "paper trading: scheduled %d jobs for markets %s",
+        sum([
+            2 * len(markets),  # evening + morning per market
+            1,  # daily summary
+            1,  # weekly summary
+        ]),
+        markets,
+    )
