@@ -43,10 +43,20 @@ class SignalService:
     Designed to be run synchronously inside ``asyncio.to_thread``.
     """
 
-    def __init__(self, price_fetcher: object | None = None) -> None:
+    def __init__(
+        self,
+        price_fetcher: object | None = None,
+        fresh_price_fetcher: object | None = None,
+    ) -> None:
         from screener.backtester.data import build_price_fetcher
 
         self._fetcher = price_fetcher or build_price_fetcher()
+        # Same-day fills/exits/marks must never read a stale cached bar (the
+        # on-disk cache tolerates being up to 3 days old — see
+        # screener.backtester.data._has_range), so these paths bypass it.
+        self._fresh_fetcher = (
+            fresh_price_fetcher or price_fetcher or build_price_fetcher(refresh=True)
+        )
 
     # ------------------------------------------------------------------
     # Entry signals
@@ -234,7 +244,7 @@ class SignalService:
 
         yf_map = {t: tv_to_yf(t, market) for t in tickers}
         try:
-            frames = self._fetcher.fetch(list(yf_map.values()), start, end)
+            frames = self._fresh_fetcher.fetch(list(yf_map.values()), start, end)
         except Exception:
             logger.exception("price fetch failed for exit signal check")
             return {}
@@ -329,7 +339,7 @@ class SignalService:
 
         yf_map = {t: tv_to_yf(t, market) for t in tickers}
         try:
-            frames = self._fetcher.fetch(list(yf_map.values()), start, end)
+            frames = self._fresh_fetcher.fetch(list(yf_map.values()), start, end)
         except Exception:
             logger.exception("price fetch failed for open prices")
             return {}
@@ -365,7 +375,7 @@ class SignalService:
 
         yf_map = {t: tv_to_yf(t, market) for t in tickers}
         try:
-            frames = self._fetcher.fetch(list(yf_map.values()), start, end)
+            frames = self._fresh_fetcher.fetch(list(yf_map.values()), start, end)
         except Exception:
             logger.exception("price fetch failed for close prices")
             return {}

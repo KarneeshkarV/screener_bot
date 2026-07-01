@@ -864,11 +864,17 @@ def _alerts_status(config: BotConfig) -> str:
 # Paper Trading Scheduled Jobs
 # ---------------------------------------------------------------------------
 
-# Schedule times (IST)
+# Schedule times (IST unless noted)
 _INDIA_EVENING_TIME = "16:00"  # India market close
-_US_EVENING_TIME = "02:30"  # US market close (IST)
 _INDIA_MORNING_TIME = "09:20"  # India market open
-_US_MORNING_TIME = "15:00"  # US market open (IST)
+
+# US times are wall-clock America/New_York and scheduled with that tzinfo
+# directly (see _schedule_paper_trading_jobs), so DST is handled automatically
+# rather than drifting via a fixed IST offset.
+_US_EVENING_TIME = "16:00"  # US market close (America/New_York)
+_US_MORNING_TIME = "09:30"  # US market open (America/New_York)
+_US_MARKET_TZ = ZoneInfo("America/New_York")
+
 _PAPER_DAILY_SUMMARY_TIME = "18:00"
 _PAPER_WEEKLY_SUMMARY_DAY = 6  # Sunday
 _PAPER_WEEKLY_SUMMARY_TIME = "10:00"
@@ -901,9 +907,9 @@ def _schedule_paper_trading_jobs(
     ) -> None:
         try:
             # Run evening signals for portfolios of this market
-            reports = await asyncio.to_thread(paper_engine.run_evening_signals)
-            # Filter to this market's portfolios
-            market_reports = [r for r in reports if r.market == market]
+            market_reports = await asyncio.to_thread(
+                paper_engine.run_evening_signals, None, market
+            )
             if market_reports:
                 pending_count = sum(len(r.actions) for r in market_reports)
                 if pending_count > 0:
@@ -929,8 +935,9 @@ def _schedule_paper_trading_jobs(
         context: ContextTypes.DEFAULT_TYPE, market: str = "india"
     ) -> None:
         try:
-            reports = await asyncio.to_thread(paper_engine.run_morning_fills)
-            market_reports = [r for r in reports if r.market == market]
+            market_reports = await asyncio.to_thread(
+                paper_engine.run_morning_fills, None, market
+            )
             if market_reports and any(r.actions for r in market_reports):
                 report_text = format_daily_report(market_reports)
                 for chat_id in targets:
@@ -1035,13 +1042,13 @@ def _schedule_paper_trading_jobs(
         h, m = (int(p) for p in _US_EVENING_TIME.split(":"))
         app.job_queue.run_daily(
             lambda ctx: asyncio.ensure_future(_evening_callback(ctx, "us")),
-            time=time(hour=h, minute=m, tzinfo=tz),
+            time=time(hour=h, minute=m, tzinfo=_US_MARKET_TZ),
             name="paper-evening-us",
         )
         h, m = (int(p) for p in _US_MORNING_TIME.split(":"))
         app.job_queue.run_daily(
             lambda ctx: asyncio.ensure_future(_morning_callback(ctx, "us")),
-            time=time(hour=h, minute=m, tzinfo=tz),
+            time=time(hour=h, minute=m, tzinfo=_US_MARKET_TZ),
             name="paper-morning-us",
         )
 

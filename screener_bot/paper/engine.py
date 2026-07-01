@@ -59,14 +59,14 @@ class PaperTradingEngine:
     # ------------------------------------------------------------------
 
     def run_evening_signals(
-        self, portfolio_name: str | None = None
+        self, portfolio_name: str | None = None, market: str | None = None
     ) -> list[DailyReport]:
         """Evaluate entry/exit signals for each enabled portfolio.
 
         Creates pending orders in Turso to be filled the next morning.
         """
         reports: list[DailyReport] = []
-        for pf in self._get_target_portfolios(portfolio_name):
+        for pf in self._get_target_portfolios(portfolio_name, market):
             report = self._make_report(pf)
             try:
                 self._evening_for_portfolio(pf, report)
@@ -191,10 +191,12 @@ class PaperTradingEngine:
     # Phase 2 — Morning fill execution
     # ------------------------------------------------------------------
 
-    def run_morning_fills(self, portfolio_name: str | None = None) -> list[DailyReport]:
+    def run_morning_fills(
+        self, portfolio_name: str | None = None, market: str | None = None
+    ) -> list[DailyReport]:
         """Fill pending orders at today's open prices."""
         reports: list[DailyReport] = []
-        for pf in self._get_target_portfolios(portfolio_name):
+        for pf in self._get_target_portfolios(portfolio_name, market):
             report = self._make_report(pf)
             try:
                 self._morning_for_portfolio(pf, report)
@@ -398,7 +400,7 @@ class PaperTradingEngine:
 
         tickers = [p["ticker"] for p in positions]
         open_prices = self._signals.fetch_open_prices(tickers, pf["market"])
-        cash = report.current_cash or pf["current_cash"]
+        cash = report.current_cash
 
         for pos in positions:
             ticker = pos["ticker"]
@@ -579,13 +581,19 @@ class PaperTradingEngine:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _get_target_portfolios(self, name: str | None) -> list[dict]:
+    def _get_target_portfolios(
+        self, name: str | None, market: str | None = None
+    ) -> list[dict]:
         if name:
             pf = self._store.fetch_portfolio_by_name(name)
             if pf and pf.get("enabled"):
                 return [pf]
             return []
-        return [p for p in self._store.fetch_portfolios() if p.get("enabled")]
+        return [
+            p
+            for p in self._store.fetch_portfolios()
+            if p.get("enabled") and (market is None or p.get("market") == market)
+        ]
 
     def _make_report(self, pf: dict) -> DailyReport:
         return DailyReport(
